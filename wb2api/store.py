@@ -41,7 +41,8 @@ class Store:
                 id_token TEXT NOT NULL, refresh_token TEXT NOT NULL,
                 firebase_api_key TEXT NOT NULL, user_id TEXT NOT NULL,
                 device_id TEXT NOT NULL, expires_at REAL NOT NULL,
-                created_at REAL NOT NULL, phone_number TEXT DEFAULT ''
+                created_at REAL NOT NULL, phone_number TEXT DEFAULT '',
+                activation_status TEXT DEFAULT 'active'
             );
             CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS api_keys (
@@ -51,6 +52,10 @@ class Store:
         ''')
         try:
             self.db.execute('ALTER TABLE accounts ADD COLUMN phone_number TEXT DEFAULT ""')
+        except sqlite3.OperationalError:
+            pass
+        try:
+            self.db.execute('ALTER TABLE accounts ADD COLUMN activation_status TEXT DEFAULT "active"')
         except sqlite3.OperationalError:
             pass
         self.db.commit()
@@ -68,6 +73,7 @@ class Store:
         result = dict(row)
         result['enabled'] = bool(result['enabled'])
         result['phone_number'] = result.get('phone_number', '') or ''
+        result['activation_status'] = result.get('activation_status', 'active') or 'active'
         for field in self.secret_fields:
             result[field] = self.cipher.decrypt(result[field].encode()).decode() if result[field] else ''
         return result
@@ -76,17 +82,40 @@ class Store:
     def public(account: dict) -> dict:
         refreshable = bool(account['refresh_token'] and account['firebase_api_key'])
         valid_id = bool(account['id_token'] and account['expires_at'] > time.time() + 60)
+        activation = account.get('activation_status', 'active') or 'active'
+        is_ready = bool(account['enabled'] and (refreshable or valid_id) and activation == 'active')
         return {
             'id': account['id'], 'label': account['label'], 'enabled': bool(account['enabled']),
             'has_refresh_token': bool(account['refresh_token']),
             'has_id_token': bool(account['id_token']), 'expires_at': account['expires_at'],
             'phone_number': account.get('phone_number', ''),
-            'ready': bool(account['enabled'] and (refreshable or valid_id)),
+            'activation_status': activation,
+            'ready': is_ready,
         }
 
     def list_accounts(self) -> list[dict]:
         rows = self.db.execute('SELECT id FROM accounts ORDER BY created_at').fetchall()
         return [self.public(self.get_account(row['id'])) for row in rows]
+
+    def export_accounts(self) -> list[dict]:
+        rows = self.db.execute('SELECT id FROM accounts ORDER BY created_at').fetchall()
+        result = []
+        for row in rows:
+            acc = self.get_account(row['id'])
+            result.append({
+                'id': acc['id'],
+                'label': acc['label'],
+                'enabled': acc['enabled'],
+                'phone_number': acc.get('phone_number', ''),
+                'refresh_token': acc['refresh_token'],
+                'id_token': acc['id_token'],
+                'firebase_api_key': acc['firebase_api_key'],
+                'user_id': acc['user_id'],
+                'activation_status': acc.get('activation_status', 'active'),
+                'created_at': acc['created_at'],
+                'expires_at': acc['expires_at'],
+            })
+        return result
 
     def add_account(self, *, label: str, firebase_api_key: str = '', refresh_token: str = '',
                     id_token: str = '', user_id: str = '', expires_at: float = 0, phone_number: str = '') -> dict:
@@ -132,6 +161,10 @@ class Store:
 
     def update_user_id(self, account_id: str, user_id: str):
         self.db.execute('UPDATE accounts SET user_id=? WHERE id=?', (user_id, account_id))
+        self.db.commit()
+
+    def update_activation_status(self, account_id: str, status: str):
+        self.db.execute('UPDATE accounts SET activation_status=? WHERE id=?', (status, account_id))
         self.db.commit()
 
     def update_tokens(self, account_id: str, id_token: str, refresh_token: str, expires_at: float):

@@ -440,23 +440,63 @@
   };
 
   // --- Account Pool Table ---
+  window.exportAccountsJson = async function() {
+    toast('正在导出号池凭据…');
+    try {
+      const accounts = await api('/admin/api/accounts/export');
+      if (!accounts || !accounts.length) {
+        toast('号池为空，暂无凭据可导出', true);
+        return;
+      }
+      const blob = new Blob([JSON.stringify(accounts, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      const date = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+      a.href = url;
+      a.download = `wb2api-accounts-${date}.json`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      toast(`已成功导出 ${accounts.length} 个账号凭据！`);
+    } catch (err) {
+      toast('导出失败: ' + err.message, true);
+    }
+  };
+
   window.loadAccounts = async function() {
     const tbody = $('accounts-table-body');
     if (!tbody) return;
     try {
       const data = await api('/admin/api/status');
       const accounts = data.accounts || [];
+      const hasUninitialized = accounts.some(a => a.activation_status === 'pending');
+      const banner = $('uninitialized-alert-banner');
+      if (banner) {
+        if (hasUninitialized) {
+          banner.classList.remove('hidden');
+        } else {
+          banner.classList.add('hidden');
+        }
+      }
       if (!accounts.length) {
         tbody.innerHTML = `<tr><td colspan="6" class="py-8 text-center text-slate-400">号池中暂无可用账号，请通过上方添加账号</td></tr>`;
         return;
       }
       tbody.innerHTML = accounts.map(acc => {
         const idShort = acc.id.slice(0, 8) + '…';
-        const readyBadge = acc.enabled
-          ? (acc.ready
-              ? `<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"><i data-lucide="check" class="w-3 h-3"></i>凭据就绪</span>`
-              : `<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium bg-amber-500/10 text-amber-400 border border-amber-500/20"><i data-lucide="clock" class="w-3 h-3"></i>待刷新</span>`)
-          : `<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium bg-slate-500/10 text-slate-400 border border-slate-500/20">已停用</span>`;
+        let readyBadge = '';
+        if (!acc.enabled) {
+          readyBadge = `<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium bg-slate-500/10 text-slate-400 border border-slate-500/20">已停用</span>`;
+        } else if (acc.activation_status === 'pending') {
+          readyBadge = `<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium bg-amber-500/10 text-amber-500 border border-amber-500/20" title="该账号尚未在官方 App 完成初始化或邮箱绑定"><i data-lucide="alert-triangle" class="w-3 h-3"></i>未在App激活</span>`;
+        } else if (acc.activation_status === 'invalid') {
+          readyBadge = `<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium bg-rose-500/10 text-rose-500 border border-rose-500/20" title="上游拒绝凭据，请点击重验"><i data-lucide="x-circle" class="w-3 h-3"></i>凭据失效</span>`;
+        } else if (acc.ready) {
+          readyBadge = `<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"><i data-lucide="check" class="w-3 h-3"></i>凭据就绪</span>`;
+        } else {
+          readyBadge = `<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium bg-amber-500/10 text-amber-400 border border-amber-500/20"><i data-lucide="clock" class="w-3 h-3"></i>待刷新</span>`;
+        }
         const exp = acc.expires_at ? new Date(acc.expires_at * 1000).toLocaleString('zh-CN', { hour12: false }) : '永久/自动续期';
         return `
           <tr class="hover:bg-slate-50/50 dark:hover:bg-slate-900/50 transition">

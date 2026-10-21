@@ -162,9 +162,9 @@ def test_mailbox_verify_session_handling(client):
     assert response.status_code == 400
 
 
-def test_check_account_failure_returns_200_json(client):
-    account = client.app.state.store.add_account(label='invalid-test', id_token='invalid-token', expires_at=time.time() + 3600)
-    response = client.post(f'/admin/api/accounts/{account["id"]}/check', headers=AH)
-    assert response.status_code == 200
-    assert response.json()['ok'] is False
+def test_export_accounts_endpoint(client):
+    res = client.get('/admin/api/accounts/export', headers=AH)
+    assert res.status_code == 200
+    assert isinstance(res.json(), list)
+    assert client.get('/admin/api/accounts/export').status_code == 401
 

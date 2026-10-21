@@ -278,12 +278,19 @@ class Wabi:
     async def validate_account(self, account_id: Any) -> dict[str, Any]:
         async with self._account_lock(account_id):
             account = await self._account(account_id)
-            data = await self._json("GET", self.base_url + "/api/v1/me", headers=self._headers(account))
-            user_id = data.get("id")
-            if user_id and not account.get("user_id"):
-                await _resolve(self.store.update_user_id(account_id, user_id))
-                account["user_id"] = user_id
-            return {key: data[key] for key in ("id", "firebase_id", "username", "display_name") if key in data and isinstance(data[key], (str, type(None)))}
+            try:
+                data = await self._json("GET", self.base_url + "/api/v1/me", headers=self._headers(account))
+                user_id = data.get("id")
+                if user_id and not account.get("user_id"):
+                    await _resolve(self.store.update_user_id(account_id, user_id))
+                    account["user_id"] = user_id
+                status = data.get("activation_status", "active")
+                await _resolve(self.store.update_activation_status(account_id, status))
+                return {key: data[key] for key in ("id", "firebase_id", "username", "display_name", "activation_status") if key in data and isinstance(data[key], (str, type(None)))}
+            except UpstreamError as exc:
+                if exc.status in (401, 403):
+                    await _resolve(self.store.update_activation_status(account_id, "invalid"))
+                raise
 
     async def _sse_lines(self, response: httpx.Response) -> AsyncIterator[str]:
         """Strict incremental UTF-8 with bounded buffering before line decoding."""

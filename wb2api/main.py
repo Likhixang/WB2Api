@@ -288,6 +288,10 @@ def create_app(overrides: dict | None = None) -> FastAPI:
         app.state.store.delete_account(account_id)
         return {'ok': True}
 
+    @app.get('/admin/api/accounts/export', dependencies=[Depends(admin)])
+    async def export_accounts():
+        return app.state.store.export_accounts()
+
     @app.get('/admin/api/keys', dependencies=[Depends(admin)])
     async def list_keys():
         return app.state.store.list_api_keys()
@@ -507,12 +511,18 @@ def create_app(overrides: dict | None = None) -> FastAPI:
 
     @app.get('/v1/models', dependencies=[Depends(inference)])
     async def models():
-        return {'object': 'list', 'data': [{'id': 'wabi', 'object': 'model', 'created': 0, 'owned_by': 'wabi'}]}
+        return {
+            'object': 'list',
+            'data': [
+                {'id': 'wabi', 'object': 'model', 'created': 0, 'owned_by': 'wabi'},
+                {'id': 'default', 'object': 'model', 'created': 0, 'owned_by': 'wabi'},
+            ]
+        }
 
     @app.post('/v1/chat/completions', dependencies=[Depends(inference)])
     async def completion(body: Completion, request: Request):
-        if body.model != 'wabi':
-            return error('Only model wabi is supported; it represents the upstream default', 400, 'model_not_found')
+        if body.model not in ('wabi', 'default', 'sabi'):
+            return error(f'Model {body.model} not supported; use "wabi" or "default"', 400, 'model_not_found')
         if body.messages[-1].role != 'user':
             return error('The last message must have user role', 400, 'invalid_request')
         if sum(len(message.content) for message in body.messages) > 200000:

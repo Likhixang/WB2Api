@@ -399,10 +399,25 @@
           </p>
         </div>
         <div class="flex items-center gap-2 shrink-0">
+          <button onclick="exportAccountsJson()" class="whitespace-nowrap flex items-center space-x-1.5 px-3 py-1.5 text-xs font-medium rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 transition" title="导出号池凭证为 JSON 备份文件">
+            <i data-lucide="download" class="w-3.5 h-3.5 shrink-0"></i>
+            <span>导出 JSON</span>
+          </button>
           <button onclick="syncStatus()" class="whitespace-nowrap flex items-center space-x-1.5 px-3 py-1.5 text-xs font-medium rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 transition">
             <i data-lucide="refresh-cw" class="w-3.5 h-3.5 shrink-0"></i>
             <span>刷新列表</span>
           </button>
+        </div>
+      </div>
+
+      <!-- Uninitialized Account Alert Callout -->
+      <div id="uninitialized-alert-banner" class="hidden m-4 sm:m-5 p-4 rounded-xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800/60 text-xs text-amber-800 dark:text-amber-300 flex items-start gap-3">
+        <i data-lucide="alert-triangle" class="w-4 h-4 text-amber-500 shrink-0 mt-0.5"></i>
+        <div>
+          <div class="font-semibold mb-1">注意：检测到号池存在【未初始化 / 待在官方 App 激活】的账号</div>
+          <p class="text-amber-700 dark:text-amber-400 leading-relaxed">
+            Wabi 官方对于新手机号，要求必须在官方移动端 App 中完成个人档案初始化和邮箱绑定。未初始化的账号无法正常流式应答。请在官方 App 登录并完成邮箱绑定后，在下方操作栏点击对应账号的「重验」按钮原地更新凭据。
+          </p>
         </div>
       </div>
 
