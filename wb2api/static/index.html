@@ -1,89 +1,467 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="color-scheme" content="dark">
-  <meta name="referrer" content="no-referrer">
-  <title>WB2Api · 管理控制台</title>
-  <link rel="stylesheet" href="/static/app.css">
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>WB2Api - Wabi 号池管理网关</title>
+  <!-- Theme Init Script -->
+  <script>
+    (function() {
+      const theme = localStorage.getItem("wb2api_theme") || "dark";
+      const isDark = theme === "dark" || (theme === "system" && window.matchMedia("(prefers-color-scheme: dark)").matches);
+      if (isDark) {
+        document.documentElement.classList.add("dark");
+      } else {
+        document.documentElement.classList.remove("dark");
+      }
+    })();
+  </script>
+  <link rel="stylesheet" href="/static/ui.css" />
+  <script src="/static/lucide.min.js"></script>
   <script src="/static/app.js" defer></script>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
+    code, pre { font-family: ui-monospace, 'SFMono-Regular', Consolas, monospace; }
+  </style>
 </head>
-<body>
-  <a class="skip-link" href="#main-content">跳至主要内容</a>
-  <section id="lock-screen" class="lock-screen" aria-labelledby="lock-title">
-    <div class="lock-art" aria-hidden="true"><span class="brand-mark large">W<span>↗</span></span><div class="orbit orbit-one"></div><div class="orbit orbit-two"></div><p>YOUR BRIDGE.<br>YOUR CONTROL.</p></div>
-    <div class="lock-panel">
-      <div class="eyebrow">WB2API / CONTROL PLANE</div>
-      <h1 id="lock-title">连接，从这里开始。</h1>
-      <p class="muted">使用管理员密钥解锁控制台。管理权限与聊天 API 的接入密钥相互独立。</p>
-      <form id="unlock-form" autocomplete="off" method="post">
-        <label for="admin-key">管理员密钥 <span class="field-note">Admin key</span></label>
-        <input id="admin-key" name="admin-key" type="password" autocomplete="off" required spellcheck="false" placeholder="输入管理员密钥" aria-describedby="key-hint" autofocus disabled>
-        <p id="key-hint" class="hint">仅保存在当前页面的 JavaScript 内存中；刷新页面或锁定后清除。不写入浏览器存储。</p>
-        <button class="button primary full" type="submit" id="unlock-button" disabled>解锁控制台 <span aria-hidden="true">↗</span></button>
-        <p id="unlock-error" class="form-message" role="alert"></p>
-      </form>
-      <p class="lock-footer"><span class="status-dot"></span> 不会自动发送短信或验证上游账户</p>
+<body class="bg-slate-50 dark:bg-slate-950 text-slate-800 dark:text-slate-100 min-h-screen flex flex-col transition-colors duration-200">
+
+  <!-- Top Navbar -->
+  <header class="border-b border-slate-200 dark:border-slate-800 bg-white/80 dark:bg-slate-900/60 backdrop-blur sticky top-0 z-50">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+      <div class="flex items-center space-x-3">
+        <div class="h-9 w-9 rounded-xl bg-gradient-to-tr from-sky-500 to-indigo-600 flex items-center justify-center shadow-lg shadow-sky-500/20">
+          <i data-lucide="message-square" class="w-5 h-5 text-white"></i>
+        </div>
+        <div>
+          <span class="text-lg font-bold tracking-tight text-slate-900 dark:text-white flex items-center gap-2">
+            WB2Api
+            <span class="text-xs px-2 py-0.5 rounded-full bg-sky-500/10 text-sky-600 dark:text-sky-400 border border-sky-500/20">v0.1.0</span>
+          </span>
+          <p class="text-xs text-slate-500 dark:text-slate-400 hidden sm:block">Wabi 多账号负载均衡与 OpenAI 兼容代理网关</p>
+        </div>
+      </div>
+      <div class="flex items-center space-x-2 sm:space-x-3">
+        <!-- Action Buttons (Shown after login) -->
+        <div id="nav-actions" class="hidden flex items-center space-x-2">
+          <button onclick="openTokenModal()" class="flex items-center space-x-1.5 px-3 py-1.5 text-xs font-medium rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 transition shadow-sm">
+            <i data-lucide="key" class="w-3.5 h-3.5 text-sky-400"></i>
+            <span>API Keys</span>
+          </button>
+          <button onclick="openProtocolModal()" class="flex items-center space-x-1.5 px-3 py-1.5 text-xs font-medium rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 transition shadow-sm">
+            <i data-lucide="sliders" class="w-3.5 h-3.5 text-indigo-400"></i>
+            <span>协议配置</span>
+          </button>
+        </div>
+
+        <!-- Theme Switcher Dropdown -->
+        <div class="relative" id="theme-menu-container">
+          <button onclick="toggleThemeMenu()" id="theme-btn" class="p-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-600 dark:text-slate-300 transition shadow-sm" title="切换显示主题">
+            <i id="theme-icon-dark" data-lucide="moon" class="w-4 h-4 hidden"></i>
+            <i id="theme-icon-light" data-lucide="sun" class="w-4 h-4 hidden"></i>
+            <i id="theme-icon-system" data-lucide="laptop" class="w-4 h-4 hidden"></i>
+          </button>
+          <div id="theme-menu" class="hidden absolute right-0 mt-2 w-36 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-xl py-1 z-50 text-xs">
+            <button onclick="setTheme('light')" class="w-full text-left px-3.5 py-2 flex items-center space-x-2 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-200 transition">
+              <i data-lucide="sun" class="w-3.5 h-3.5 text-amber-500"></i>
+              <span>浅色模式</span>
+            </button>
+            <button onclick="setTheme('dark')" class="w-full text-left px-3.5 py-2 flex items-center space-x-2 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-200 transition">
+              <i data-lucide="moon" class="w-3.5 h-3.5 text-sky-400"></i>
+              <span>暗色模式</span>
+            </button>
+            <button onclick="setTheme('system')" class="w-full text-left px-3.5 py-2 flex items-center space-x-2 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-200 transition">
+              <i data-lucide="laptop" class="w-3.5 h-3.5 text-indigo-400"></i>
+              <span>跟随系统</span>
+            </button>
+          </div>
+        </div>
+
+        <button id="btn-logout" onclick="lock()" class="hidden flex items-center space-x-1.5 px-3 py-1.5 text-xs font-medium rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-800 hover:bg-rose-50 dark:hover:bg-rose-950/40 text-slate-600 dark:text-slate-300 hover:text-rose-600 dark:hover:text-rose-400 transition">
+          <i data-lucide="log-out" class="w-3.5 h-3.5"></i>
+          <span>锁定</span>
+        </button>
+
+        <a href="https://github.com/Likhixang/WB2Api" target="_blank" class="flex items-center space-x-1.5 px-3 py-1.5 text-xs font-medium rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 transition shadow-sm">
+          <svg class="w-4 h-4 fill-current shrink-0" viewBox="0 0 24 24" aria-hidden="true">
+            <path fill-rule="evenodd" clip-rule="evenodd" d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.53 1.032 1.53 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z"></path>
+          </svg>
+          <span class="hidden sm:inline">GitHub</span>
+        </a>
+      </div>
     </div>
-  </section>
+  </header>
 
-  <div id="app-shell" class="app-shell" hidden>
-    <aside class="sidebar" aria-label="管理台侧栏">
-      <a class="brand" href="#overview"><span class="brand-mark" aria-hidden="true">W<span>↗</span></span><span>WB2Api<small>管理控制台</small></span></a>
-      <div class="nav-label">工作空间</div>
-      <nav aria-label="主要导航">
-        <a href="#overview" class="nav-item" data-view="overview" aria-current="page"><span aria-hidden="true">◫</span>状态概览<span class="nav-index">01</span></a>
-        <a href="#accounts" class="nav-item" data-view="accounts"><span aria-hidden="true">◎</span>账户管理<span class="nav-index">02</span></a>
-        <a href="#protocol" class="nav-item" data-view="protocol"><span aria-hidden="true">⌘</span>协议设置<span class="nav-index">03</span></a>
-        <a href="#integration" class="nav-item" data-view="integration"><span aria-hidden="true">↗</span>接入说明<span class="nav-index">04</span></a>
-      </nav>
-      <div class="sidebar-note"><span class="status-dot"></span><strong>真实状态，按需操作</strong><p>控制台不执行后台轮询，不自动调用上游验证或短信接口。</p></div>
-      <div class="sidebar-bottom"><span id="sidebar-version">版本待获取</span><button type="button" id="lock-button" class="button quiet">锁定控制台 <span aria-hidden="true">↗</span></button></div>
-    </aside>
+  <!-- Login Gate Screen (Shown when locked) -->
+  <div id="lock-screen" class="flex-1 flex items-center justify-center px-4 py-12">
+    <div class="max-w-md w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-8 shadow-xl space-y-6">
+      <div class="text-center space-y-2">
+        <div class="h-12 w-12 mx-auto rounded-2xl bg-gradient-to-tr from-sky-500 to-indigo-600 flex items-center justify-center shadow-lg shadow-sky-500/20 text-white">
+          <i data-lucide="lock" class="w-6 h-6"></i>
+        </div>
+        <h2 class="text-xl font-bold text-slate-900 dark:text-white">管理员认证</h2>
+        <p class="text-xs text-slate-500 dark:text-slate-400">请输入管理员密钥 (WB2API_ADMIN_KEY) 解锁控制台。</p>
+      </div>
 
-    <div class="workspace">
-      <header class="topbar"><div class="breadcrumb">工作空间 <span aria-hidden="true">/</span> <span id="breadcrumb-title">状态概览</span></div><div class="topbar-actions"><span id="sync-label" class="sync-label" role="status">尚未同步</span><button id="refresh-button" class="button secondary" type="button"><span aria-hidden="true">↻</span> 刷新状态</button></div></header>
-      <main id="main-content" tabindex="-1">
-        <section id="view-overview" class="view" aria-labelledby="overview-title">
-          <div class="page-heading"><div><p class="eyebrow">OVERVIEW</p><h1 id="overview-title" tabindex="-1">一眼看清，连接状态。</h1><p class="muted">从账户凭据到协议映射，逐步完成你的 API 接入。</p></div><span id="overview-badge" class="badge">等待状态</span></div>
-          <div id="stale-notice" class="notice" role="status" hidden>状态获取失败。下面为上次同步的信息，不能代表当前可用性；请手动刷新。</div>
-          <div class="stats-grid">
-            <article class="stat-card"><div class="stat-label">账户总数 <span aria-hidden="true">◎</span></div><strong id="stat-total">—</strong><p id="stat-enabled">尚未获取账户状态</p></article>
-            <article class="stat-card"><div class="stat-label">凭据就绪 <span aria-hidden="true">↗</span></div><strong id="stat-ready">—</strong><p>就绪标记不等于上游联调成功</p></article>
-            <article class="stat-card"><div class="stat-label">协议映射 <span aria-hidden="true">⌘</span></div><strong id="stat-protocol" class="stat-word">待获取</strong><p>真实事件样本决定映射配置</p></article>
-          </div>
-          <div class="overview-grid">
-            <article class="panel connection-panel"><div class="panel-heading"><h2>接入检查清单</h2><span class="small muted">SETUP CHECKLIST</span></div><ol class="checklist"><li><span class="step-number">01</span><div><h3>导入上游账户</h3><p id="check-account">等待账户状态。至少需要一组有效凭据。</p></div><a href="#accounts" class="text-link">管理账户 ↗</a></li><li><span class="step-number">02</span><div><h3>配置真实事件映射</h3><p id="check-protocol">未提供真实事件样本，不能假定协议可用。</p></div><a href="#protocol" class="text-link">配置协议 ↗</a></li><li><span class="step-number">03</span><div><h3>在客户端完成联调</h3><p>此控制台不自动发起聊天；请用接入示例手动验证。</p></div><a href="#integration" class="text-link">查看说明 ↗</a></li></ol><div class="boundary-note"><span aria-hidden="true">↳</span><p><strong>配置完成 ≠ 聊天可用。</strong> 健康检查仅表示进程存活，账户验证仅检查账户。真实对话与流式事件仍需端到端联调。</p></div></article>
-            <article class="panel"><div class="panel-heading"><h2>服务信息</h2><span class="badge" id="health-badge">未检查</span></div><dl class="info-list"><div><dt>运行版本</dt><dd id="service-version">—</dd></div><div><dt>上游 Base URL</dt><dd id="service-base-url">—</dd></div><div><dt>请求超时</dt><dd id="service-timeout">—</dd></div><div><dt>最近同步</dt><dd id="service-sync">—</dd></div></dl><p class="hint">健康状态来自同源 <code>/healthz</code>，仅在管理状态获取成功后读取。</p></article>
-          </div>
-        </section>
-
-        <section id="view-accounts" class="view" aria-labelledby="accounts-title" hidden>
-          <div class="page-heading"><div><p class="eyebrow">ACCOUNTS</p><h1 id="accounts-title" tabindex="-1">账户，有序管理。</h1><p class="muted">只展示凭据是否存在，不回显令牌。无删除操作。</p></div><button type="button" class="button primary" id="open-import">导入令牌 <span aria-hidden="true">＋</span></button></div>
-          <article class="panel accounts-panel"><div class="panel-heading"><h2>账户列表</h2><span id="account-count" class="muted small">待同步</span></div><div id="accounts-list" class="account-list"><div class="empty-state"><span class="empty-symbol" aria-hidden="true">◎</span><h3>尚未获取账户</h3><p>解锁后从管理接口读取，不展示演示数据。</p></div></div></article>
-          <div class="forms-grid">
-            <details id="import-details" class="panel form-panel"><summary>手动导入凭据 <span class="muted small">Refresh token / ID token</span></summary><p class="hint">至少填写一种令牌。需要自动刷新时，请提供 refresh token（Firebase API key 选填，留空默认使用官方 Key）。此操作导入账户，不会在页面中展示令牌。</p><form id="import-form" autocomplete="off"><label for="import-label">账户名称</label><input id="import-label" name="label" maxlength="100" placeholder="例如：工作账户" required><label for="firebase-key">Firebase API key <span class="field-note">选填，留空默认使用官方 Key</span></label><input id="firebase-key" name="firebase_api_key" type="password" autocomplete="off" spellcheck="false" placeholder="留空使用官方默认 Key"><label for="refresh-token">Refresh token</label><input id="refresh-token" name="refresh_token" type="password" autocomplete="off" spellcheck="false" aria-describedby="token-hint"><label for="id-token">ID token</label><input id="id-token" name="id_token" type="password" autocomplete="off" spellcheck="false" aria-describedby="token-hint"><p id="token-hint" class="hint">Refresh token 与 ID token 至少填写一项；不要粘贴到聊天或错误反馈中。</p><label for="user-id">User ID <span class="field-note">可选</span></label><input id="user-id" name="user_id" autocomplete="off" spellcheck="false"><button class="button primary" type="submit">导入账户</button><p id="import-message" class="form-message" role="status"></p></form></details>
-            <details class="panel form-panel" id="sms-details" open><summary>手机号登录 <span class="muted small">支持短信 + Google 验证</span></summary><p class="hint">点击“发送验证码”获取短信。若上游要求 Google 二次验证，页面会自动展开 Google 授权链接引导完成验证。</p><form id="sms-form" autocomplete="off"><label for="phone-number">手机号 <span class="field-note">含国际区号</span></label><input id="phone-number" name="phone_number" type="tel" autocomplete="off" placeholder="+国家区号及手机号" required><button class="button secondary" type="button" id="send-code-button">发送验证码</button><p id="send-code-message" class="form-message" role="status"></p><label for="sms-code">短信验证码</label><input id="sms-code" name="code" type="password" inputmode="numeric" autocomplete="off" required><label for="sms-firebase-key">Firebase API key <span class="field-note">选填，留空默认使用官方 Key</span></label><input id="sms-firebase-key" name="firebase_api_key" type="password" autocomplete="off" spellcheck="false" placeholder="留空使用官方默认 Key"><label for="sms-label">账户名称</label><input id="sms-label" name="label" maxlength="100" placeholder="例如：手机账户" required><button class="button primary" type="submit">验证并导入</button><p id="sms-message" class="form-message" role="status"></p><div id="google-flow" class="notice" role="region" aria-label="Google 验证" hidden><h3>Google 二次验证</h3><p>该账号触发了 Wabi 的 Google 验证保护，请按以下步骤完成：</p><ol class="checklist" style="margin: 10px 0;"><li><span class="step-number">1</span><div><p>点击下方按钮，在浏览器新标签页中打开 Google 授权页面并完成登录授权：</p><a id="google-url-link" class="button secondary" target="_blank" rel="noopener noreferrer" style="display:inline-block;margin-top:6px;">打开 Google 授权页面 ↗</a></div></li><li><span class="step-number">2</span><div><p>授权完成后，页面会跳转（若提示无法访问或页面空白无需担心）。</p><p>请直接<strong>复制浏览器地址栏的完整网址</strong>（或其中的 <code>code=...</code>）：</p><input id="google-redirect-url" type="text" autocomplete="off" spellcheck="false" placeholder="粘贴跳转后的完整网址或授权 Code" style="margin-top:6px;"></div></li></ol><button type="button" class="button primary" id="google-verify-button">完成 Google 验证并导入</button><p id="google-verify-message" class="form-message" role="status"></p></div><div id="challenge-notice" class="notice" role="status" hidden></div></form></details>
-          </div>
-        </section>
-
-        <section id="view-protocol" class="view" aria-labelledby="protocol-title" hidden>
-          <div class="page-heading"><div><p class="eyebrow">PROTOCOL</p><h1 id="protocol-title" tabindex="-1">让事件，正确抵达。</h1><p class="muted">依据真实上游事件配置字段路径和事件类型，不预置猜测的事件名。</p></div><span id="protocol-badge" class="badge">待获取</span></div>
-          <div class="notice"><strong>配置后才可聊天。</strong> 当前没有提供真实事件样本；结构模板不是可用协议。即使保存成功，也需要真实请求验证。</div>
-          <div class="protocol-grid"><article class="panel"><div class="panel-heading"><h2>映射 JSON</h2><button class="button quiet" id="reload-protocol" type="button">重新读取</button></div><form id="protocol-form"><label for="protocol-editor">协议映射配置</label><textarea id="protocol-editor" rows="23" spellcheck="false" autocomplete="off" aria-describedby="protocol-help protocol-message" placeholder="解锁后读取服务器配置；或点击下方按钮载入空结构。"></textarea><p id="protocol-help" class="hint">保存前在本地解析 JSON 并检查字段类型；只有点击“保存配置”才会提交。重新读取会替换编辑器内容。</p><div class="button-row"><button type="submit" class="button primary" id="save-protocol">保存配置</button><button type="button" class="button secondary" id="validate-protocol">检查 JSON</button><button type="button" class="button quiet" id="protocol-template">载入空结构</button></div><p id="protocol-message" class="form-message" role="status"></p></form></article><aside class="panel protocol-reference"><div class="panel-heading"><h2>字段参考</h2></div><dl><dt>event_type_path</dt><dd>事件类型的字段路径。</dd><dt>turn_id_path / thread_id_path</dt><dd>轮次标识与会话标识的字段路径。</dd><dt>text_path</dt><dd>文本内容的字段路径。</dd><dt>delta_events / done_events / error_events</dt><dd>分别填写文本、结束、错误事件的真实类型名，值为字符串数组。没有样本时保持空数组，不猜测。</dd><dt>mode</dt><dd><code>delta</code> 表示增量文本；<code>snapshot</code> 表示完整快照。</dd></dl><div class="boundary-note"><p>字段路径的结构示例：<code>data.text</code>（仅说明点分路径形式，不代表上游实际字段）。所有路径与事件名以真实流量为准。</p></div></aside></div>
-        </section>
-
-        <section id="view-integration" class="view" aria-labelledby="integration-title" hidden>
-          <div class="page-heading"><div><p class="eyebrow">INTEGRATION</p><h1 id="integration-title" tabindex="-1">最后一公里，交给客户端。</h1><p class="muted">OpenAI 兼容接入方式。请先准备账户凭据与真实协议映射。</p></div><span class="badge">待端到端联调</span></div>
-          <div class="integration-grid"><article class="panel"><div class="panel-heading"><h2>连接参数</h2></div><dl class="info-list"><div><dt>Base URL</dt><dd><code id="client-base-url"></code></dd></div><div><dt>Model</dt><dd><code>wabi</code></dd></div><div><dt>API key</dt><dd><code>WB2API_API_KEY</code> 的配置值</dd></div></dl><div class="boundary-note"><p><strong>两把密钥，各司其职。</strong> 客户端使用服务端环境变量 <code>WB2API_API_KEY</code> 对应的接入密钥，不是管理员密钥。<code>wabi</code> 仅代表上游默认模型，不支持指定供应商模型。</p></div></article><article class="panel"><div class="panel-heading"><h2>接入前确认</h2></div><ul class="plain-list"><li>至少一个启用且凭据就绪的账户。</li><li>协议映射与真实上游事件一致。</li><li>客户端能够访问此服务，生产环境使用 HTTPS。</li><li>手动发起对话，验证文本、完成与错误事件。</li></ul><p class="hint">管理页不提供聊天可用性保证，也不会自动执行下面的命令。</p></article></div>
-          <article class="panel code-panel"><div class="panel-heading"><h2>cURL · 流式对话</h2><button type="button" class="button secondary" id="copy-curl">复制示例</button></div><pre tabindex="0" aria-label="cURL 接入示例"><code id="curl-example"></code></pre><p class="hint">将 <code>YOUR_API_KEY</code> 替换为接入密钥。示例中不包含任何实际密钥；请在自己的终端手动运行。</p></article>
-        </section>
-        <footer class="page-footer"><span>WB2Api <span aria-hidden="true">/</span> 自托管的 API 桥接工作空间</span><span>只报告已知状态，不猜测上游能力。</span></footer>
-      </main>
+      <form id="unlock-form" onsubmit="handleUnlock(event)" class="space-y-4">
+        <div>
+          <label for="admin-key" class="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1.5">管理员密钥</label>
+          <input type="password" id="admin-key" placeholder="••••••••••••••••" required autofocus class="w-full bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-xl px-4 py-2.5 text-sm text-slate-900 dark:text-slate-100 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-sky-500/50 focus:border-sky-500 transition" />
+        </div>
+        <button type="submit" id="btn-unlock" class="w-full bg-sky-600 hover:bg-sky-500 text-white font-medium text-sm py-2.5 px-4 rounded-xl flex items-center justify-center space-x-2 transition shadow-lg shadow-sky-600/20 disabled:opacity-50">
+          <i data-lucide="key-round" class="w-4 h-4"></i>
+          <span>解锁控制台</span>
+        </button>
+      </form>
+      <div id="unlock-error" role="alert" class="text-xs text-center hidden rounded-lg p-2.5 bg-rose-50 dark:bg-rose-950/50 text-rose-600 dark:text-rose-300 border border-rose-200 dark:border-rose-800"></div>
     </div>
   </div>
-  <div id="toast-region" class="toast-region" role="status" aria-live="polite" aria-atomic="true"></div>
-  <noscript><div class="noscript">此控制台需要启用 JavaScript 才能调用管理接口；不会在无脚本状态下提交密钥。</div></noscript>
+
+  <!-- Main Container (Shown after unlock) -->
+  <main id="app-shell" class="hidden flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8">
+
+    <!-- Stats Banner -->
+    <div class="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-5 gap-4">
+      <div class="bg-white dark:bg-slate-900/70 border border-slate-200 dark:border-slate-800/80 rounded-2xl p-4 shadow-sm">
+        <div class="flex items-center justify-between text-slate-500 dark:text-slate-400 text-xs font-medium mb-1">
+          <span>总账号数</span>
+          <i data-lucide="users" class="w-4 h-4 text-slate-500"></i>
+        </div>
+        <div class="text-2xl font-bold text-slate-900 dark:text-white" id="stat-total">0</div>
+        <div class="text-[11px] text-slate-400 dark:text-slate-500 mt-1">号池纳入账号总数</div>
+      </div>
+      <div class="bg-white dark:bg-slate-900/70 border border-slate-200 dark:border-slate-800/80 rounded-2xl p-4 shadow-sm">
+        <div class="flex items-center justify-between text-slate-500 dark:text-slate-400 text-xs font-medium mb-1">
+          <span>正常就绪</span>
+          <i data-lucide="check-circle" class="w-4 h-4 text-emerald-400"></i>
+        </div>
+        <div class="text-2xl font-bold text-emerald-400" id="stat-ready">0</div>
+        <div class="text-[11px] text-slate-400 dark:text-slate-500 mt-1">有效凭据且已激活</div>
+      </div>
+      <div class="bg-white dark:bg-slate-900/70 border border-slate-200 dark:border-slate-800/80 rounded-2xl p-4 shadow-sm">
+        <div class="flex items-center justify-between text-slate-500 dark:text-slate-400 text-xs font-medium mb-1">
+          <span>API 密钥</span>
+          <i data-lucide="key" class="w-4 h-4 text-sky-400"></i>
+        </div>
+        <div class="text-2xl font-bold text-sky-400" id="stat-keys">0</div>
+        <div class="text-[11px] text-slate-400 dark:text-slate-500 mt-1">下游分发授权密钥</div>
+      </div>
+      <div class="bg-white dark:bg-slate-900/70 border border-slate-200 dark:border-slate-800/80 rounded-2xl p-4 shadow-sm">
+        <div class="flex items-center justify-between text-slate-500 dark:text-slate-400 text-xs font-medium mb-1">
+          <span>协议映射</span>
+          <i data-lucide="cpu" class="w-4 h-4 text-indigo-400"></i>
+        </div>
+        <div class="text-2xl font-bold text-indigo-400" id="stat-protocol">未配置</div>
+        <div class="text-[11px] text-slate-400 dark:text-slate-500 mt-1">SSE 流事件解析状态</div>
+      </div>
+      <div class="bg-white dark:bg-slate-900/70 border border-slate-200 dark:border-slate-800/80 rounded-2xl p-4 shadow-sm col-span-2 lg:col-span-1">
+        <div class="flex items-center justify-between text-slate-500 dark:text-slate-400 text-xs font-medium mb-1">
+          <span>服务状态</span>
+          <i data-lucide="activity" class="w-4 h-4 text-emerald-400"></i>
+        </div>
+        <div class="text-2xl font-bold text-emerald-400" id="stat-health">正常</div>
+        <div class="text-[11px] text-slate-400 dark:text-slate-500 mt-1">双架构健康探针</div>
+      </div>
+    </div>
+
+    <!-- Quick Setup & Add Account Grid -->
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
+      
+      <!-- Add Account Wizard Card (1 Col) -->
+      <div class="bg-white dark:bg-slate-900/80 border border-slate-200 dark:border-slate-800 rounded-2xl p-6 shadow-sm flex flex-col justify-between">
+        <div>
+          <div class="flex items-center justify-between mb-4">
+            <h2 class="text-base font-semibold text-slate-900 dark:text-white flex items-center gap-2">
+              <i data-lucide="user-plus" class="w-4 h-4 text-sky-400"></i>
+              添加与登录账号
+            </h2>
+            <div class="flex items-center space-x-1 p-0.5 bg-slate-100 dark:bg-slate-800 rounded-lg text-xs">
+              <button onclick="switchLoginTab('phone')" id="tab-phone" class="px-2.5 py-1 rounded-md bg-white dark:bg-slate-700 font-medium shadow-sm transition">手机登录</button>
+              <button onclick="switchLoginTab('token')" id="tab-token" class="px-2.5 py-1 rounded-md text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200 transition">导入凭据</button>
+            </div>
+          </div>
+          <p class="text-xs text-slate-500 dark:text-slate-400 mb-6 leading-relaxed">
+            支持手机短信验证与 Google 二次授权验证。Firebase Key 已自动内置，无需手动填写。
+          </p>
+
+          <!-- Tab 1: Phone Login -->
+          <div id="pane-phone" class="space-y-4">
+            <div>
+              <label class="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1.5">手机号码 (含国际区号)</label>
+              <div class="flex space-x-2">
+                <input type="tel" id="sms-phone" placeholder="+8613800000000" class="flex-1 bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-xl px-3.5 py-2.5 text-sm text-slate-900 dark:text-slate-100 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-sky-500/50" />
+                <button onclick="handleSendSms()" id="btn-send-sms" class="px-4 py-2.5 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-xs font-medium transition shrink-0">
+                  发送验证码
+                </button>
+              </div>
+            </div>
+            <div>
+              <label class="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1.5">短信验证码</label>
+              <input type="text" id="sms-code" placeholder="6 位验证码" class="w-full bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-xl px-3.5 py-2.5 text-sm text-slate-900 dark:text-slate-100 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-sky-500/50" />
+            </div>
+            <div>
+              <label class="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1.5">账号标签名称</label>
+              <input type="text" id="sms-label" placeholder="例如：主手机号" class="w-full bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-xl px-3.5 py-2.5 text-sm text-slate-900 dark:text-slate-100 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-sky-500/50" />
+            </div>
+            <button onclick="handleVerifySms()" id="btn-verify-sms" class="w-full bg-sky-600 hover:bg-sky-500 text-white font-medium text-sm py-2.5 px-4 rounded-xl flex items-center justify-center space-x-2 transition shadow-lg shadow-sky-600/20 disabled:opacity-50">
+              <i data-lucide="check" class="w-4 h-4"></i>
+              <span>验证并导入</span>
+            </button>
+
+            <!-- Google OAuth Secondary Challenge Section -->
+            <div id="google-challenge-box" class="hidden p-4 rounded-xl bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800/40 space-y-3">
+              <div class="flex items-center space-x-2 text-xs font-semibold text-amber-700 dark:text-amber-400">
+                <i data-lucide="shield-alert" class="w-4 h-4"></i>
+                <span>触发 Google 二次验证</span>
+              </div>
+              <p class="text-xs text-amber-600 dark:text-amber-300 leading-relaxed">
+                Wabi 要求此手机号完成 Google 授权激活：
+              </p>
+              <a id="btn-google-auth-link" href="#" target="_blank" class="w-full py-2 px-3 rounded-lg bg-amber-600 hover:bg-amber-500 text-white text-xs font-medium flex items-center justify-center space-x-1.5 transition shadow-sm">
+                <i data-lucide="external-link" class="w-3.5 h-3.5"></i>
+                <span>第 1 步：打开 Google 授权页面 ↗</span>
+              </a>
+              <div class="space-y-1.5">
+                <label class="text-[11px] font-medium text-slate-600 dark:text-slate-400">第 2 步：粘贴授权跳转后的完整网址 (或 code)</label>
+                <input type="text" id="google-code-input" placeholder="粘贴浏览器地址栏的完整跳转网址" class="w-full text-xs bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-800 rounded-lg p-2 text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-amber-500/50" />
+              </div>
+              <button onclick="handleCompleteGoogleVerify()" id="btn-submit-google" class="w-full py-2 px-3 rounded-lg bg-sky-600 hover:bg-sky-500 text-white text-xs font-medium transition shadow-sm">
+                第 3 步：完成验证并激活入库
+              </button>
+            </div>
+          </div>
+
+          <!-- Tab 2: Manual Token Import -->
+          <div id="pane-token" class="space-y-4 hidden">
+            <div>
+              <label class="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1.5">账号标签名称</label>
+              <input type="text" id="import-label" placeholder="例如：抓包提取账号" class="w-full bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-xl px-3.5 py-2.5 text-sm text-slate-900 dark:text-slate-100 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-sky-500/50" />
+            </div>
+            <div>
+              <label class="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1.5">Firebase Refresh Token</label>
+              <textarea id="import-rt" rows="3" placeholder="粘贴抓取到的长期有效 Refresh Token" class="w-full font-mono text-xs bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-xl p-2.5 text-slate-900 dark:text-slate-100 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-sky-500/50"></textarea>
+            </div>
+            <div>
+              <label class="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1.5">ID Token (选填，留空自动刷新)</label>
+              <input type="password" id="import-id-token" placeholder="选填，初始 1 小时临时票据" class="w-full font-mono text-xs bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-xl px-3.5 py-2 text-slate-900 dark:text-slate-100 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-sky-500/50" />
+            </div>
+            <button onclick="handleManualImport()" id="btn-manual-import" class="w-full bg-sky-600 hover:bg-sky-500 text-white font-medium text-sm py-2.5 px-4 rounded-xl flex items-center justify-center space-x-2 transition shadow-lg shadow-sky-600/20 disabled:opacity-50">
+              <i data-lucide="plus-circle" class="w-4 h-4"></i>
+              <span>导入账号凭证</span>
+            </button>
+          </div>
+        </div>
+
+        <div id="form-msg" class="text-xs text-center hidden rounded-lg p-2.5 mt-4"></div>
+      </div>
+
+      <!-- Quick Access & Configuration Card (2 Cols) -->
+      <div class="lg:col-span-2 bg-white dark:bg-slate-900/80 border border-slate-200 dark:border-slate-800 rounded-2xl p-6 shadow-sm flex flex-col justify-between">
+        <div>
+          <div class="flex items-center justify-between mb-4">
+            <h2 class="text-base font-semibold text-slate-900 dark:text-white flex items-center gap-2">
+              <i data-lucide="terminal" class="w-4 h-4 text-emerald-400"></i>
+              OpenAI 兼容接口接入指引
+            </h2>
+            <button onclick="openTokenModal()" class="flex items-center space-x-1.5 px-3 py-1.5 text-xs font-medium rounded-lg bg-sky-50 dark:bg-sky-950/50 hover:bg-sky-100 dark:hover:bg-sky-900/50 text-sky-600 dark:text-sky-400 border border-sky-200 dark:border-sky-800/40 transition">
+              <i data-lucide="key" class="w-3.5 h-3.5"></i>
+              <span>管理下游密钥 (API Keys)</span>
+            </button>
+          </div>
+
+          <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-4">
+            <div class="p-3 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800">
+              <div class="text-[11px] text-slate-400 mb-1">Base URL</div>
+              <div class="font-mono text-xs font-semibold text-slate-800 dark:text-slate-200 truncate flex items-center justify-between">
+                <span id="label-base-url">/v1</span>
+                <button onclick="copyBaseUrl()" class="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"><i data-lucide="copy" class="w-3.5 h-3.5"></i></button>
+              </div>
+            </div>
+            <div class="p-3 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800">
+              <div class="text-[11px] text-slate-400 mb-1">模型名称 (Model)</div>
+              <div class="font-mono text-xs font-semibold text-slate-800 dark:text-slate-200 flex items-center justify-between">
+                <span>wabi</span>
+                <span class="text-[10px] text-slate-400">上游默认模型</span>
+              </div>
+            </div>
+            <div class="p-3 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800">
+              <div class="text-[11px] text-slate-400 mb-1">接口协议</div>
+              <div class="font-mono text-xs font-semibold text-slate-800 dark:text-slate-200 truncate flex items-center justify-between">
+                <span>OpenAI /v1/chat/completions</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="relative rounded-xl overflow-hidden bg-slate-950 border border-slate-800">
+            <div class="flex items-center justify-between px-4 py-2 border-b border-slate-800 text-xs text-slate-400">
+              <span>cURL 流式调用测试</span>
+              <button onclick="copyCurlExample()" class="flex items-center space-x-1 text-sky-400 hover:text-sky-300">
+                <i data-lucide="copy" class="w-3 h-3"></i>
+                <span>复制命令</span>
+              </button>
+            </div>
+            <pre class="p-4 text-xs font-mono text-emerald-400 overflow-x-auto leading-relaxed" id="curl-box"></pre>
+          </div>
+        </div>
+
+        <div class="mt-4 pt-4 border-t border-slate-200 dark:border-slate-800 text-xs text-slate-500 dark:text-slate-400 flex items-center justify-between">
+          <span>支持任意标准 OpenAI 兼容客户端或分发网关直接接入。</span>
+          <button onclick="syncStatus()" class="flex items-center space-x-1 text-slate-500 hover:text-slate-800 dark:hover:text-slate-200">
+            <i data-lucide="refresh-cw" class="w-3.5 h-3.5"></i>
+            <span>刷新状态</span>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Account Pool Table Section -->
+    <div class="bg-white dark:bg-slate-900/80 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-sm overflow-hidden">
+      <div class="p-4 sm:p-5 border-b border-slate-200 dark:border-slate-800/80 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <div>
+          <h2 class="text-base font-semibold text-slate-900 dark:text-white flex items-center gap-2">
+            <i data-lucide="server" class="w-4 h-4 text-emerald-400"></i>
+            号池列表
+          </h2>
+          <p class="text-xs text-slate-500 dark:text-slate-400 mt-1 flex items-center gap-2 flex-wrap">
+            <span class="inline-flex items-center gap-1"><span class="w-1.5 h-1.5 rounded-full bg-emerald-500"></span><span>凭据本地 Fernet 高强度加密持久化</span></span>
+            <span class="text-slate-300 dark:text-slate-700">·</span>
+            <span>自动定时按需刷新票据</span>
+            <span class="text-slate-300 dark:text-slate-700">·</span>
+            <span>逐账号独立长连接串行调度</span>
+          </p>
+        </div>
+        <div class="flex items-center gap-2 shrink-0">
+          <button onclick="syncStatus()" class="whitespace-nowrap flex items-center space-x-1.5 px-3 py-1.5 text-xs font-medium rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 transition">
+            <i data-lucide="refresh-cw" class="w-3.5 h-3.5 shrink-0"></i>
+            <span>刷新列表</span>
+          </button>
+        </div>
+      </div>
+
+      <div class="overflow-x-auto">
+        <table class="w-full min-w-[780px] text-left text-xs whitespace-nowrap">
+          <thead class="bg-slate-50 dark:bg-slate-950/60 text-slate-500 dark:text-slate-400 border-b border-slate-200 dark:border-slate-800/80">
+            <tr>
+              <th class="py-3 px-4 font-medium whitespace-nowrap">ID</th>
+              <th class="py-3 px-4 font-medium whitespace-nowrap">账号标签</th>
+              <th class="py-3 px-4 font-medium whitespace-nowrap">凭据状态</th>
+              <th class="py-3 px-4 font-medium whitespace-nowrap">到期时间</th>
+              <th class="py-3 px-4 font-medium whitespace-nowrap">启用状态</th>
+              <th class="py-3 px-4 font-medium text-right whitespace-nowrap">操作</th>
+            </tr>
+          </thead>
+          <tbody id="accounts-table-body" class="divide-y divide-slate-200 dark:divide-slate-800/60 text-slate-700 dark:text-slate-200 whitespace-nowrap">
+            <tr>
+              <td colspan="6" class="py-8 text-center text-slate-500">
+                正在加载号池数据...
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+  </main>
+
+  <!-- Multi-Token Management Modal -->
+  <div id="token-modal" role="dialog" aria-modal="true" class="fixed inset-0 z-50 bg-slate-900/40 dark:bg-slate-950/70 backdrop-blur-sm hidden flex items-center justify-center p-4">
+    <div class="max-w-2xl w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-6 shadow-2xl space-y-5 max-h-[90vh] flex flex-col">
+      <div class="flex items-center justify-between pb-3 border-b border-slate-200 dark:border-slate-800 shrink-0">
+        <div class="flex items-center space-x-2">
+          <div class="p-1.5 rounded-lg bg-sky-50 dark:bg-sky-950/50 text-sky-600 dark:text-sky-400 border border-sky-200 dark:border-sky-800/40">
+            <i data-lucide="key" class="w-4 h-4"></i>
+          </div>
+          <h3 class="text-sm font-semibold text-slate-900 dark:text-white">API Keys 密钥管理 (支持多密钥)</h3>
+        </div>
+        <button aria-label="关闭对话框" onclick="closeTokenModal()" class="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200">
+          <i data-lucide="x" class="w-4 h-4"></i>
+        </button>
+      </div>
+
+      <!-- Create New Token Form -->
+      <div class="p-3.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900/60 space-y-3 shrink-0">
+        <div class="text-xs font-semibold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
+          <i data-lucide="plus-circle" class="w-3.5 h-3.5 text-sky-500"></i>
+          <span>新建 API Key 访问密钥</span>
+        </div>
+        <div class="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+          <input type="text" id="new-token-name" placeholder="名称 (如: 默认密钥 / 客户端 1)" class="text-xs bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-xl px-3 py-2 text-slate-900 dark:text-slate-100 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-sky-500/50" />
+          <div class="sm:col-span-2 flex space-x-2">
+            <input type="text" id="new-token-val" placeholder="自定义或留空自动生成 sk-wb-..." class="flex-1 font-mono text-xs bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-xl px-3 py-2 text-slate-900 dark:text-slate-100 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-sky-500/50" />
+            <button onclick="handleCreateToken()" class="px-3.5 py-2 rounded-xl bg-sky-600 hover:bg-sky-500 text-white font-medium text-xs shadow-sm transition shrink-0">
+              添加
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Token List Table -->
+      <div class="flex-1 overflow-x-auto overflow-y-auto rounded-xl border border-slate-200 dark:border-slate-800">
+        <table class="w-full text-left text-xs whitespace-nowrap">
+          <thead class="bg-slate-50 dark:bg-slate-950/60 text-slate-500 dark:text-slate-400 border-b border-slate-200 dark:border-slate-800 sticky top-0">
+            <tr>
+              <th class="py-2.5 px-3 font-medium whitespace-nowrap">名称</th>
+              <th class="py-2.5 px-3 font-medium whitespace-nowrap">密钥值 (API Key)</th>
+              <th class="py-2.5 px-3 font-medium whitespace-nowrap">状态</th>
+              <th class="py-2.5 px-3 font-medium whitespace-nowrap">创建时间</th>
+              <th class="py-2.5 px-3 font-medium text-right whitespace-nowrap">操作</th>
+            </tr>
+          </thead>
+          <tbody id="token-table-body" class="divide-y divide-slate-200 dark:divide-slate-800/60 text-slate-700 dark:text-slate-200 whitespace-nowrap">
+            <tr>
+              <td colspan="5" class="py-6 text-center text-slate-400 dark:text-slate-500">正在加载令牌列表...</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="pt-2 border-t border-slate-200 dark:border-slate-800 flex justify-end shrink-0">
+        <button onclick="closeTokenModal()" class="px-4 py-2 text-xs font-medium rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 transition">
+          完成
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Protocol Modal -->
+  <div id="protocol-modal" role="dialog" aria-modal="true" class="fixed inset-0 z-50 bg-slate-900/40 dark:bg-slate-950/70 backdrop-blur-sm hidden flex items-center justify-center p-4">
+    <div class="max-w-2xl w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-6 shadow-2xl space-y-4 max-h-[90vh] flex flex-col">
+      <div class="flex items-center justify-between pb-3 border-b border-slate-200 dark:border-slate-800 shrink-0">
+        <div class="flex items-center space-x-2">
+          <div class="p-1.5 rounded-lg bg-indigo-50 dark:bg-indigo-950/50 text-indigo-600 dark:text-indigo-400 border border-indigo-200 dark:border-indigo-800/40">
+            <i data-lucide="sliders" class="w-4 h-4"></i>
+          </div>
+          <h3 class="text-sm font-semibold text-slate-900 dark:text-white">SSE 流事件协议映射设置</h3>
+        </div>
+        <button onclick="closeProtocolModal()" class="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200">
+          <i data-lucide="x" class="w-4 h-4"></i>
+        </button>
+      </div>
+
+      <div class="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
+        Wabi 的 SSE 事件结构由服务端广播下发。配置后系统将把对应的 delta/done 事件转为标准 OpenAI 流式 chunk。
+      </div>
+
+      <textarea id="protocol-json" rows="12" class="w-full font-mono text-xs bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-xl p-3 text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-indigo-500/50"></textarea>
+
+      <div class="flex items-center justify-between pt-2 border-t border-slate-200 dark:border-slate-800 shrink-0">
+        <button onclick="loadProtocolTemplate()" class="px-3 py-1.5 text-xs font-medium rounded-lg border border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition">
+          载入初始模板
+        </button>
+        <div class="flex space-x-2">
+          <button onclick="closeProtocolModal()" class="px-3.5 py-1.5 text-xs font-medium rounded-lg border border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition">
+            取消
+          </button>
+          <button onclick="saveProtocolSettings()" id="btn-save-protocol" class="px-4 py-1.5 text-xs font-medium rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white transition shadow-sm">
+            保存配置
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Global Toast Notification Container -->
+  <div id="toast-container" class="fixed bottom-5 right-5 z-50 flex flex-col space-y-2 pointer-events-none"></div>
+
 </body>
 </html>

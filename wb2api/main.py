@@ -55,6 +55,7 @@ class AccountInput(Input):
     refresh_token: str = Field(default='', max_length=20000)
     id_token: str = Field(default='', max_length=20000)
     user_id: str = Field(default='', max_length=200)
+    phone_number: str = Field(default='', max_length=50)
 
 
 class Toggle(Input):
@@ -69,6 +70,7 @@ class CheckCode(Phone):
     code: str = Field(min_length=4, max_length=12)
     firebase_api_key: str = Field(default='', max_length=1024)
     label: str = Field(default='Phone Account', max_length=100)
+    account_id: str = Field(default='', max_length=100)
 
 
 class GoogleVerify(Input):
@@ -77,6 +79,16 @@ class GoogleVerify(Input):
     code: str = Field(min_length=1, max_length=5000)
     firebase_api_key: str = Field(default='', max_length=1024)
     label: str = Field(default='', max_length=100)
+    account_id: str = Field(default='', max_length=100)
+
+
+class ApiKeyInput(Input):
+    name: str = Field(min_length=1, max_length=100)
+    key: str = Field(default='', max_length=200)
+
+
+class ApiKeyToggle(Input):
+    enabled: bool
 
 
 class Message(Input):
@@ -148,7 +160,7 @@ def create_app(overrides: dict | None = None) -> FastAPI:
         response.headers['X-Content-Type-Options'] = 'nosniff'
         response.headers['Referrer-Policy'] = 'no-referrer'
         response.headers['Cache-Control'] = 'no-store'
-        response.headers['Content-Security-Policy'] = "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
+        response.headers['Content-Security-Policy'] = "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
         return response
 
     def authorize(request: Request, key: str):
@@ -161,7 +173,16 @@ def create_app(overrides: dict | None = None) -> FastAPI:
         authorize(request, 'admin_key')
 
     def inference(request: Request):
-        authorize(request, 'api_key')
+        expected = config.get('api_key', '')
+        raw = request.headers.get('authorization', '')
+        token = raw.removeprefix('Bearer ').strip() if raw.startswith('Bearer ') else ''
+        if not token:
+            raise HTTPException(401, 'Invalid bearer key')
+        if expected and hmac.compare_digest(token.encode(), expected.encode()):
+            return
+        if app.state.store.verify_api_key(token):
+            return
+        raise HTTPException(401, 'Invalid bearer key')
 
     @app.exception_handler(HTTPException)
     async def http_error(request, exc):
@@ -224,9 +245,45 @@ def create_app(overrides: dict | None = None) -> FastAPI:
         payload['firebase_api_key'] = firebase_key
         return app.state.store.add_account(**payload, expires_at=jwt_exp(body.id_token))
 
+    @app.put('/admin/api/accounts/{account_id}/reauth', dependencies=[Depends(admin)])
+    async def reauth_account(account_id: str, body: AccountInput):
+        if not body.refresh_token and not body.id_token:
+            raise HTTPException(422, 'Provide a refresh token or ID token')
+        firebase_key = body.firebase_api_key or DEFAULT_FIREBASE_API_KEY
+        return app.state.store.update_account_credentials(
+            account_id,
+            id_token=body.id_token,
+            refresh_token=body.refresh_token,
+            expires_at=jwt_exp(body.id_token),
+            firebase_api_key=firebase_key,
+            phone_number=body.phone_number
+        )
+
     @app.patch('/admin/api/accounts/{account_id}', dependencies=[Depends(admin)])
     async def toggle(account_id: str, body: Toggle):
         return app.state.store.set_enabled(account_id, body.enabled)
+
+    @app.delete('/admin/api/accounts/{account_id}', dependencies=[Depends(admin)])
+    async def remove_account(account_id: str):
+        app.state.store.delete_account(account_id)
+        return {'ok': True}
+
+    @app.get('/admin/api/keys', dependencies=[Depends(admin)])
+    async def list_keys():
+        return app.state.store.list_api_keys()
+
+    @app.post('/admin/api/keys', dependencies=[Depends(admin)])
+    async def create_key(body: ApiKeyInput):
+        return app.state.store.add_api_key(body.name, body.key)
+
+    @app.patch('/admin/api/keys/{key_id}', dependencies=[Depends(admin)])
+    async def toggle_key(key_id: str, body: ApiKeyToggle):
+        return app.state.store.toggle_api_key(key_id, body.enabled)
+
+    @app.delete('/admin/api/keys/{key_id}', dependencies=[Depends(admin)])
+    async def delete_key(key_id: str):
+        app.state.store.delete_api_key(key_id)
+        return {'ok': True}
 
     @app.post('/admin/api/accounts/{account_id}/check', dependencies=[Depends(admin)])
     async def check(account_id: str):

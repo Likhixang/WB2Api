@@ -45,6 +45,8 @@ def test_account_encryption_and_no_secret_echo(client):
     assert data_dir.get_account(account['id'])['refresh_token'] == secret
     toggled = client.patch('/admin/api/accounts/' + account['id'], headers=AH, json={'enabled': False})
     assert not toggled.json()['enabled']
+    deleted = client.delete('/admin/api/accounts/' + account['id'], headers=AH)
+    assert deleted.status_code == 200
     assert secret not in client.get('/admin/api/status', headers=AH).text
 
 
@@ -121,6 +123,27 @@ def test_store_persists_and_reuses_device_id(tmp_path):
 
 def test_google_verify_session_handling(client):
     response = client.post('/admin/api/auth/google-verify', headers=AH, json={
-        'phone_number': '+8613800000000', 'code': 'test-code', 'state': 'test-state'
+        'phone_number': '+861****0000', 'code': 'test-code', 'state': 'test-state'
     })
     assert response.status_code == 400
+
+
+def test_api_key_management_and_inference_auth(client):
+    res = client.post('/admin/api/keys', headers=AH, json={'name': 'Test Token', 'key': 'sk-wb-test-123456'})
+    assert res.status_code == 200
+    key_id = res.json()['id']
+    key_val = res.json()['key']
+    assert key_val == 'sk-wb-test-123456'
+
+    list_res = client.get('/admin/api/keys', headers=AH)
+    assert any(k['id'] == key_id for k in list_res.json())
+
+    models_res = client.get('/v1/models', headers={'Authorization': f'Bearer {key_val}'})
+    assert models_res.status_code == 200
+
+    client.patch(f'/admin/api/keys/{key_id}', headers=AH, json={'enabled': False})
+    fail_res = client.get('/v1/models', headers={'Authorization': f'Bearer {key_val}'})
+    assert fail_res.status_code == 401
+
+    del_res = client.delete(f'/admin/api/keys/{key_id}', headers=AH)
+    assert del_res.status_code == 200
