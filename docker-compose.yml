@@ -1,0 +1,23 @@
+services:
+  wb2api:
+    image: ghcr.io/likhixang/wb2api:latest
+    container_name: wb2api
+    restart: unless-stopped
+    init: true
+    environment:
+      WB2API_ADMIN_KEY: ${WB2API_ADMIN_KEY:?Set a distinct management key of at least 24 characters}
+      WB2API_API_KEY: ${WB2API_API_KEY:?Set a distinct API key of at least 24 characters}
+      WABI_BASE_URL: ${WABI_BASE_URL:-https://app.getwabi.ai}
+      WABI_REQUEST_TIMEOUT: ${WABI_REQUEST_TIMEOUT:-120}
+      WABI_TIME_ZONE: ${WABI_TIME_ZONE:-Asia/Shanghai}
+    volumes:
+      - wb2api_data:/data
+    ports:
+      - "${WB2API_BIND_ADDRESS:?Set an explicit bind address}:${WB2API_PORT:?Set an explicit host port}:8080"
+    read_only: true
+    tmpfs: ["/tmp:size=16m,mode=1777"]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    stop_grace_period: 15s
+volumes:
+  wb2api_data:

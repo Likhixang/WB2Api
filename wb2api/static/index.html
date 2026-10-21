@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <meta name="referrer" content="no-referrer">
+  <title>WB2Api · 管理控制台</title>
+  <link rel="stylesheet" href="/static/app.css">
+  <script src="/static/app.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#main-content">跳至主要内容</a>
+  <section id="lock-screen" class="lock-screen" aria-labelledby="lock-title">
+    <div class="lock-art" aria-hidden="true"><span class="brand-mark large">W<span>↗</span></span><div class="orbit orbit-one"></div><div class="orbit orbit-two"></div><p>YOUR BRIDGE.<br>YOUR CONTROL.</p></div>
+    <div class="lock-panel">
+      <div class="eyebrow">WB2API / CONTROL PLANE</div>
+      <h1 id="lock-title">连接，从这里开始。</h1>
+      <p class="muted">使用管理员密钥解锁控制台。管理权限与聊天 API 的接入密钥相互独立。</p>
+      <form id="unlock-form" autocomplete="off" method="post">
+        <label for="admin-key">管理员密钥 <span class="field-note">Admin key</span></label>
+        <input id="admin-key" name="admin-key" type="password" autocomplete="off" required spellcheck="false" placeholder="输入管理员密钥" aria-describedby="key-hint" autofocus disabled>
+        <p id="key-hint" class="hint">仅保存在当前页面的 JavaScript 内存中；刷新页面或锁定后清除。不写入浏览器存储。</p>
+        <button class="button primary full" type="submit" id="unlock-button" disabled>解锁控制台 <span aria-hidden="true">↗</span></button>
+        <p id="unlock-error" class="form-message" role="alert"></p>
+      </form>
+      <p class="lock-footer"><span class="status-dot"></span> 不会自动发送短信或验证上游账户</p>
+    </div>
+  </section>
+
+  <div id="app-shell" class="app-shell" hidden>
+    <aside class="sidebar" aria-label="管理台侧栏">
+      <a class="brand" href="#overview"><span class="brand-mark" aria-hidden="true">W<span>↗</span></span><span>WB2Api<small>管理控制台</small></span></a>
+      <div class="nav-label">工作空间</div>
+      <nav aria-label="主要导航">
+        <a href="#overview" class="nav-item" data-view="overview" aria-current="page"><span aria-hidden="true">◫</span>状态概览<span class="nav-index">01</span></a>
+        <a href="#accounts" class="nav-item" data-view="accounts"><span aria-hidden="true">◎</span>账户管理<span class="nav-index">02</span></a>
+        <a href="#protocol" class="nav-item" data-view="protocol"><span aria-hidden="true">⌘</span>协议设置<span class="nav-index">03</span></a>
+        <a href="#integration" class="nav-item" data-view="integration"><span aria-hidden="true">↗</span>接入说明<span class="nav-index">04</span></a>
+      </nav>
+      <div class="sidebar-note"><span class="status-dot"></span><strong>真实状态，按需操作</strong><p>控制台不执行后台轮询，不自动调用上游验证或短信接口。</p></div>
+      <div class="sidebar-bottom"><span id="sidebar-version">版本待获取</span><button type="button" id="lock-button" class="button quiet">锁定控制台 <span aria-hidden="true">↗</span></button></div>
+    </aside>
+
+    <div class="workspace">
+      <header class="topbar"><div class="breadcrumb">工作空间 <span aria-hidden="true">/</span> <span id="breadcrumb-title">状态概览</span></div><div class="topbar-actions"><span id="sync-label" class="sync-label" role="status">尚未同步</span><button id="refresh-button" class="button secondary" type="button"><span aria-hidden="true">↻</span> 刷新状态</button></div></header>
+      <main id="main-content" tabindex="-1">
+        <section id="view-overview" class="view" aria-labelledby="overview-title">
+          <div class="page-heading"><div><p class="eyebrow">OVERVIEW</p><h1 id="overview-title" tabindex="-1">一眼看清，连接状态。</h1><p class="muted">从账户凭据到协议映射，逐步完成你的 API 接入。</p></div><span id="overview-badge" class="badge">等待状态</span></div>
+          <div id="stale-notice" class="notice" role="status" hidden>状态获取失败。下面为上次同步的信息，不能代表当前可用性；请手动刷新。</div>
+          <div class="stats-grid">
+            <article class="stat-card"><div class="stat-label">账户总数 <span aria-hidden="true">◎</span></div><strong id="stat-total">—</strong><p id="stat-enabled">尚未获取账户状态</p></article>
+            <article class="stat-card"><div class="stat-label">凭据就绪 <span aria-hidden="true">↗</span></div><strong id="stat-ready">—</strong><p>就绪标记不等于上游联调成功</p></article>
+            <article class="stat-card"><div class="stat-label">协议映射 <span aria-hidden="true">⌘</span></div><strong id="stat-protocol" class="stat-word">待获取</strong><p>真实事件样本决定映射配置</p></article>
+          </div>
+          <div class="overview-grid">
+            <article class="panel connection-panel"><div class="panel-heading"><h2>接入检查清单</h2><span class="small muted">SETUP CHECKLIST</span></div><ol class="checklist"><li><span class="step-number">01</span><div><h3>导入上游账户</h3><p id="check-account">等待账户状态。至少需要一组有效凭据。</p></div><a href="#accounts" class="text-link">管理账户 ↗</a></li><li><span class="step-number">02</span><div><h3>配置真实事件映射</h3><p id="check-protocol">未提供真实事件样本，不能假定协议可用。</p></div><a href="#protocol" class="text-link">配置协议 ↗</a></li><li><span class="step-number">03</span><div><h3>在客户端完成联调</h3><p>此控制台不自动发起聊天；请用接入示例手动验证。</p></div><a href="#integration" class="text-link">查看说明 ↗</a></li></ol><div class="boundary-note"><span aria-hidden="true">↳</span><p><strong>配置完成 ≠ 聊天可用。</strong> 健康检查仅表示进程存活，账户验证仅检查账户。真实对话与流式事件仍需端到端联调。</p></div></article>
+            <article class="panel"><div class="panel-heading"><h2>服务信息</h2><span class="badge" id="health-badge">未检查</span></div><dl class="info-list"><div><dt>运行版本</dt><dd id="service-version">—</dd></div><div><dt>上游 Base URL</dt><dd id="service-base-url">—</dd></div><div><dt>请求超时</dt><dd id="service-timeout">—</dd></div><div><dt>最近同步</dt><dd id="service-sync">—</dd></div></dl><p class="hint">健康状态来自同源 <code>/healthz</code>，仅在管理状态获取成功后读取。</p></article>
+          </div>
+        </section>
+
+        <section id="view-accounts" class="view" aria-labelledby="accounts-title" hidden>
+          <div class="page-heading"><div><p class="eyebrow">ACCOUNTS</p><h1 id="accounts-title" tabindex="-1">账户，有序管理。</h1><p class="muted">只展示凭据是否存在，不回显令牌。无删除操作。</p></div><button type="button" class="button primary" id="open-import">导入令牌 <span aria-hidden="true">＋</span></button></div>
+          <article class="panel accounts-panel"><div class="panel-heading"><h2>账户列表</h2><span id="account-count" class="muted small">待同步</span></div><div id="accounts-list" class="account-list"><div class="empty-state"><span class="empty-symbol" aria-hidden="true">◎</span><h3>尚未获取账户</h3><p>解锁后从管理接口读取，不展示演示数据。</p></div></div></article>
+          <div class="forms-grid">
+            <details id="import-details" class="panel form-panel"><summary>手动导入凭据 <span class="muted small">Refresh token / ID token</span></summary><p class="hint">至少填写一种令牌。需要自动刷新时，请同时提供 Firebase API key 和 refresh token。此操作导入账户，不会在页面中展示令牌。</p><form id="import-form" autocomplete="off"><label for="import-label">账户名称</label><input id="import-label" name="label" maxlength="100" placeholder="例如：工作账户" required><label for="firebase-key">Firebase API key</label><input id="firebase-key" name="firebase_api_key" type="password" autocomplete="off" spellcheck="false"><label for="refresh-token">Refresh token</label><input id="refresh-token" name="refresh_token" type="password" autocomplete="off" spellcheck="false" aria-describedby="token-hint"><label for="id-token">ID token</label><input id="id-token" name="id_token" type="password" autocomplete="off" spellcheck="false" aria-describedby="token-hint"><p id="token-hint" class="hint">Refresh token 与 ID token 至少填写一项；不要粘贴到聊天或错误反馈中。</p><label for="user-id">User ID <span class="field-note">可选</span></label><input id="user-id" name="user_id" autocomplete="off" spellcheck="false"><button class="button primary" type="submit">导入账户</button><p id="import-message" class="form-message" role="status"></p></form></details>
+            <details class="panel form-panel" id="sms-details"><summary>手机号登录 <span class="muted small">需要上游支持</span></summary><p class="hint">仅在你点击“发送验证码”时发送短信。上游可能要求 Google 验证或邮箱验证码；此页面不绕过验证。</p><form id="sms-form" autocomplete="off"><label for="phone-number">手机号 <span class="field-note">含国际区号</span></label><input id="phone-number" name="phone_number" type="tel" autocomplete="off" placeholder="+国家区号及手机号" required><button class="button secondary" type="button" id="send-code-button">发送验证码</button><p id="send-code-message" class="form-message" role="status"></p><label for="sms-code">短信验证码</label><input id="sms-code" name="code" type="password" inputmode="numeric" autocomplete="off" required><label for="sms-firebase-key">Firebase API key</label><input id="sms-firebase-key" name="firebase_api_key" type="password" autocomplete="off" spellcheck="false" required><label for="sms-label">账户名称</label><input id="sms-label" name="label" maxlength="100" placeholder="例如：手机账户" required><button class="button primary" type="submit">验证并导入</button><p id="sms-message" class="form-message" role="status"></p><div id="challenge-notice" class="notice" role="status" hidden></div></form></details>
+          </div>
+        </section>
+
+        <section id="view-protocol" class="view" aria-labelledby="protocol-title" hidden>
+          <div class="page-heading"><div><p class="eyebrow">PROTOCOL</p><h1 id="protocol-title" tabindex="-1">让事件，正确抵达。</h1><p class="muted">依据真实上游事件配置字段路径和事件类型，不预置猜测的事件名。</p></div><span id="protocol-badge" class="badge">待获取</span></div>
+          <div class="notice"><strong>配置后才可聊天。</strong> 当前没有提供真实事件样本；结构模板不是可用协议。即使保存成功，也需要真实请求验证。</div>
+          <div class="protocol-grid"><article class="panel"><div class="panel-heading"><h2>映射 JSON</h2><button class="button quiet" id="reload-protocol" type="button">重新读取</button></div><form id="protocol-form"><label for="protocol-editor">协议映射配置</label><textarea id="protocol-editor" rows="23" spellcheck="false" autocomplete="off" aria-describedby="protocol-help protocol-message" placeholder="解锁后读取服务器配置；或点击下方按钮载入空结构。"></textarea><p id="protocol-help" class="hint">保存前在本地解析 JSON 并检查字段类型；只有点击“保存配置”才会提交。重新读取会替换编辑器内容。</p><div class="button-row"><button type="submit" class="button primary" id="save-protocol">保存配置</button><button type="button" class="button secondary" id="validate-protocol">检查 JSON</button><button type="button" class="button quiet" id="protocol-template">载入空结构</button></div><p id="protocol-message" class="form-message" role="status"></p></form></article><aside class="panel protocol-reference"><div class="panel-heading"><h2>字段参考</h2></div><dl><dt>event_type_path</dt><dd>事件类型的字段路径。</dd><dt>turn_id_path / thread_id_path</dt><dd>轮次标识与会话标识的字段路径。</dd><dt>text_path</dt><dd>文本内容的字段路径。</dd><dt>delta_events / done_events / error_events</dt><dd>分别填写文本、结束、错误事件的真实类型名，值为字符串数组。没有样本时保持空数组，不猜测。</dd><dt>mode</dt><dd><code>delta</code> 表示增量文本；<code>snapshot</code> 表示完整快照。</dd></dl><div class="boundary-note"><p>字段路径的结构示例：<code>data.text</code>（仅说明点分路径形式，不代表上游实际字段）。所有路径与事件名以真实流量为准。</p></div></aside></div>
+        </section>
+
+        <section id="view-integration" class="view" aria-labelledby="integration-title" hidden>
+          <div class="page-heading"><div><p class="eyebrow">INTEGRATION</p><h1 id="integration-title" tabindex="-1">最后一公里，交给客户端。</h1><p class="muted">OpenAI 兼容接入方式。请先准备账户凭据与真实协议映射。</p></div><span class="badge">待端到端联调</span></div>
+          <div class="integration-grid"><article class="panel"><div class="panel-heading"><h2>连接参数</h2></div><dl class="info-list"><div><dt>Base URL</dt><dd><code id="client-base-url"></code></dd></div><div><dt>Model</dt><dd><code>wabi</code></dd></div><div><dt>API key</dt><dd><code>WB2API_API_KEY</code> 的配置值</dd></div></dl><div class="boundary-note"><p><strong>两把密钥，各司其职。</strong> 客户端使用服务端环境变量 <code>WB2API_API_KEY</code> 对应的接入密钥，不是管理员密钥。<code>wabi</code> 仅代表上游默认模型，不支持指定供应商模型。</p></div></article><article class="panel"><div class="panel-heading"><h2>接入前确认</h2></div><ul class="plain-list"><li>至少一个启用且凭据就绪的账户。</li><li>协议映射与真实上游事件一致。</li><li>客户端能够访问此服务，生产环境使用 HTTPS。</li><li>手动发起对话，验证文本、完成与错误事件。</li></ul><p class="hint">管理页不提供聊天可用性保证，也不会自动执行下面的命令。</p></article></div>
+          <article class="panel code-panel"><div class="panel-heading"><h2>cURL · 流式对话</h2><button type="button" class="button secondary" id="copy-curl">复制示例</button></div><pre tabindex="0" aria-label="cURL 接入示例"><code id="curl-example"></code></pre><p class="hint">将 <code>YOUR_API_KEY</code> 替换为接入密钥。示例中不包含任何实际密钥；请在自己的终端手动运行。</p></article>
+        </section>
+        <footer class="page-footer"><span>WB2Api <span aria-hidden="true">/</span> 自托管的 API 桥接工作空间</span><span>只报告已知状态，不猜测上游能力。</span></footer>
+      </main>
+    </div>
+  </div>
+  <div id="toast-region" class="toast-region" role="status" aria-live="polite" aria-atomic="true"></div>
+  <noscript><div class="noscript">此控制台需要启用 JavaScript 才能调用管理接口；不会在无脚本状态下提交密钥。</div></noscript>
+</body>
+</html>
