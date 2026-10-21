@@ -8,7 +8,7 @@ import uuid
 import xml.etree.ElementTree as ET
 from html import escape
 
-from jsonschema import Draft202012Validator, SchemaError
+from jsonschema import Draft202012Validator, Draft7Validator, Draft201909Validator, SchemaError
 
 
 class ToolProtocolError(ValueError):
@@ -37,6 +37,16 @@ def strict_json(text):
     return value
 
 
+_SCHEMA_DRAFTS = {
+    prefix + 'json-schema.org/' + suffix + fragment: validator
+    for prefix in ('https://', 'http://')
+    for suffix, validator in (('draft/2020-12/schema', Draft202012Validator),
+                              ('draft/2019-09/schema', Draft201909Validator),
+                              ('draft-07/schema', Draft7Validator))
+    for fragment in ('', '#')
+}
+
+
 def _local_schema(value):
     if isinstance(value, dict):
         for key, item in value.items():
@@ -44,8 +54,8 @@ def _local_schema(value):
                 raise ValueError('Schema resource identifiers are not supported')
             if key in ('$ref', '$dynamicRef') and (not isinstance(item, str) or not item.startswith('#')):
                 raise ValueError('Only local schema references are supported')
-            if key == '$schema' and item not in ('https://json-schema.org/draft/2020-12/schema', 'https://json-schema.org/draft/2020-12/schema#'):
-                raise ValueError('Only JSON Schema draft 2020-12 is supported')
+            if key == '$schema' and (not isinstance(item, str) or item not in _SCHEMA_DRAFTS):
+                raise ValueError('Only JSON Schema drafts 7, 2019-09 and 2020-12 are supported')
             _local_schema(item)
     elif isinstance(value, list):
         for item in value:
@@ -73,16 +83,19 @@ class ToolAdapter:
                 name = fn.get('name')
                 if not isinstance(name, str) or not re.fullmatch(r'[A-Za-z0-9_-]{1,64}', name) or name in self.validators:
                     raise ValueError('Function names must be unique and match [A-Za-z0-9_-]{1,64}')
-                if 'description' in fn and not isinstance(fn['description'], str):
+                if 'description' in fn and fn['description'] is not None and not isinstance(fn['description'], str):
                     raise ValueError('Function description must be text')
-                if 'strict' in fn and not isinstance(fn['strict'], bool):
+                if 'strict' in fn and fn['strict'] is not None and not isinstance(fn['strict'], bool):
                     raise ValueError('Function strict must be boolean')
-                schema = fn.get('parameters', {'type': 'object', 'properties': {}})
-                if not isinstance(schema, dict) or schema.get('type') != 'object':
-                    raise ValueError('Function parameters must declare type object')
+                schema = fn.get('parameters')
+                if schema is None:
+                    schema = {}
+                if not isinstance(schema, dict) or schema.get('type', 'object') != 'object':
+                    raise ValueError('Function parameters must be an object schema')
                 _local_schema(schema)
-                Draft202012Validator.check_schema(schema)
-                self.validators[name] = Draft202012Validator(schema)
+                validator_type = _SCHEMA_DRAFTS.get(schema.get('$schema', ''), Draft202012Validator)
+                validator_type.check_schema(schema)
+                self.validators[name] = validator_type(schema)
             if isinstance(self.choice, dict):
                 if set(self.choice) != {'type', 'function'} or self.choice['type'] != 'function' or not isinstance(self.choice['function'], dict) or set(self.choice['function']) != {'name'}:
                     raise ValueError('Invalid forced function choice')
@@ -94,7 +107,9 @@ class ToolAdapter:
             if (self.choice == 'required' or self.forced) and not self.tools:
                 raise ValueError('tool_choice requires a function')
         except (ValueError, TypeError, SchemaError, RecursionError) as exc:
-            raise ToolProtocolError('Invalid tool definition or tool_choice', request=True) from exc
+            detail = ('Invalid JSON Schema' if isinstance(exc, SchemaError) else
+                      str(exc) if type(exc) is ValueError else 'Invalid schema structure')
+            raise ToolProtocolError('Invalid tool definition or tool_choice: ' + detail, request=True) from exc
 
     def validate_arguments(self, name, arguments, *, request=False, require_known=True):
         try:
