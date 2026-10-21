@@ -70,6 +70,7 @@ class Wabi:
         # another caller is waiting. Entries disappear when their last user exits.
         self._locks: dict[Any, tuple[asyncio.Lock, int]] = {}
         self._readers: set[asyncio.Task[None]] = set()
+        self._threads: dict[Any, str] = {}
         self._closed = False
 
     @staticmethod
@@ -394,13 +395,16 @@ class Wabi:
                     raise terminal.result()
                 # The stream is connected and independently consumed before any
                 # thread/message POST. All early events stay in the bounded queue.
-                thread = await bounded(self._json(
-                    "POST", self.base_url + "/api/v1/threads", headers=self._headers(account),
-                    json={"title": "WB2Api", "request_id": str(uuid.uuid4()), "kind": "group"},
-                ))
-                thread_id = (thread.get("thread") or {}).get("id") or (thread.get("state") or {}).get("thread_id") or thread.get("id")
-                if not isinstance(thread_id, str) or not thread_id:
-                    raise UpstreamError("Thread creation returned no id", code="invalid_upstream_response")
+                thread_id = self._threads.get(account_id)
+                if not thread_id:
+                    thread = await bounded(self._json(
+                        "POST", self.base_url + "/api/v1/threads", headers=self._headers(account),
+                        json={"title": "WB2Api", "request_id": str(uuid.uuid4()), "kind": "group"},
+                    ))
+                    thread_id = (thread.get("thread") or {}).get("id") or (thread.get("state") or {}).get("thread_id") or thread.get("id")
+                    if not isinstance(thread_id, str) or not thread_id:
+                        raise UpstreamError("Thread creation returned no id", code="invalid_upstream_response")
+                    self._threads[account_id] = thread_id
                 if terminal.done():
                     raise terminal.result()
                 accepted = await bounded(self._json(
