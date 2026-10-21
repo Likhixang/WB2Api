@@ -62,6 +62,7 @@ def test_validation_never_echoes_tokens(client):
 
 
 def test_fail_closed_without_protocol(client):
+    client.app.state.store.set_setting('protocol', json.dumps({'delta_events': [], 'done_events': []}))
     response = client.post('/v1/chat/completions', headers=IH,
                            json={'messages': [{'role': 'user', 'content': 'test'}]})
     assert response.status_code == 501

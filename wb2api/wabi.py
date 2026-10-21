@@ -278,8 +278,10 @@ class Wabi:
         async with self._account_lock(account_id):
             account = await self._account(account_id)
             data = await self._json("GET", self.base_url + "/api/v1/me", headers=self._headers(account))
-            # Explicit allowlist: /me must never echo session credentials even if
-            # the upstream adds token fields in a future response version.
+            user_id = data.get("id")
+            if user_id and not account.get("user_id"):
+                await _resolve(self.store.update_user_id(account_id, user_id))
+                account["user_id"] = user_id
             return {key: data[key] for key in ("id", "firebase_id", "username", "display_name") if key in data and isinstance(data[key], (str, type(None)))}
 
     async def _sse_lines(self, response: httpx.Response) -> AsyncIterator[str]:
@@ -396,7 +398,7 @@ class Wabi:
                     "POST", self.base_url + "/api/v1/threads", headers=self._headers(account),
                     json={"title": "WB2Api", "request_id": str(uuid.uuid4()), "kind": "group"},
                 ))
-                thread_id = thread.get("id")
+                thread_id = (thread.get("thread") or {}).get("id") or (thread.get("state") or {}).get("thread_id") or thread.get("id")
                 if not isinstance(thread_id, str) or not thread_id:
                     raise UpstreamError("Thread creation returned no id", code="invalid_upstream_response")
                 if terminal.done():

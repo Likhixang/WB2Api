@@ -23,8 +23,14 @@ from .wabi import UpstreamError, Wabi
 
 VERSION = '0.1.0'
 DEFAULT_PROTOCOL = {
-    'event_type_path': 'type', 'turn_id_path': 'turn_id', 'thread_id_path': 'thread_id',
-    'text_path': 'delta.text', 'delta_events': [], 'done_events': [], 'error_events': [], 'mode': 'delta',
+    'event_type_path': 'type',
+    'turn_id_path': 'turn_id',
+    'thread_id_path': 'thread_id',
+    'text_path': 'delta.text',
+    'delta_events': ['message_delta'],
+    'done_events': ['message_finished'],
+    'error_events': ['turn_error', 'message_error'],
+    'mode': 'delta',
 }
 DEFAULT_FIREBASE_API_KEY = 'AIzaSyBqAGBGJrs9ut-Mc1k8f6x8tdD_e-ZDIDI'
 STATIC = Path(__file__).parent / 'static'

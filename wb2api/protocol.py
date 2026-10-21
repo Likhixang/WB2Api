@@ -184,6 +184,13 @@ class ProtocolMapper:
             raise ProtocolError("Wabi reported an error for this turn", "upstream_turn_error")
         if kind in self.events["done_events"]:
             if not self.has_text:
+                fallback_text = ""
+                blocks = extract_path(payload, "message.blocks")
+                if isinstance(blocks, list):
+                    fallback_text = "".join(b.get("text", "") for b in blocks if isinstance(b, dict) and b.get("type") == "text")
+                if fallback_text:
+                    self.has_text = True
+                    return fallback_text, True
                 raise ProtocolError("Wabi completed the turn without text", "empty_upstream_response")
             return None, True
         if kind not in self.events["delta_events"]:

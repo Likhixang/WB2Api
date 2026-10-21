@@ -130,6 +130,10 @@ class Store:
         self.db.execute('DELETE FROM accounts WHERE id=?', (account_id,))
         self.db.commit()
 
+    def update_user_id(self, account_id: str, user_id: str):
+        self.db.execute('UPDATE accounts SET user_id=? WHERE id=?', (user_id, account_id))
+        self.db.commit()
+
     def update_tokens(self, account_id: str, id_token: str, refresh_token: str, expires_at: float):
         self.db.execute('UPDATE accounts SET id_token=?,refresh_token=?,expires_at=? WHERE id=?', (
             self.seal(id_token), self.seal(refresh_token), expires_at, account_id,
