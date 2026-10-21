@@ -229,10 +229,10 @@
     try {
       const res = await api('/admin/api/auth/check-code', {
         method: 'POST',
-        body: { phone_number: phone, code, label }
+        body: { phone_number: phone, code, label, account_id: state.reauthAccountId || '' }
       });
       if (res.requires_google) {
-        state.pendingGoogle = { phone, state: res.google_state, label };
+        state.pendingGoogle = { phone, state: res.google_state, label, accountId: state.reauthAccountId || '' };
         $('btn-google-auth-link').href = res.google_url;
         $('google-challenge-box').classList.remove('hidden');
         if (window.lucide) lucide.createIcons();
@@ -240,7 +240,8 @@
         toast('请完成 Google 二次验证');
         return;
       }
-      toast('短信验证成功，账号已入库！');
+      toast(state.reauthAccountId ? '账号凭据已原地更新成功！' : '短信验证成功，账号已入库！');
+      state.reauthAccountId = null;
       $('sms-code').value = '';
       await syncStatus();
     } catch (err) {
@@ -267,14 +268,16 @@
           phone_number: info.phone || $('sms-phone').value.trim(),
           state: info.state || '',
           code: rawUrl,
-          label: info.label || 'Google Phone Account'
+          label: info.label || 'Google Phone Account',
+          account_id: info.accountId || state.reauthAccountId || ''
         }
       });
-      toast('Google 验证成功，账号已成功激活！');
+      toast('Google 验证成功，账号凭据已更新！');
       $('google-challenge-box').classList.add('hidden');
       $('sms-code').value = '';
       $('google-code-input').value = '';
       state.pendingGoogle = null;
+      state.reauthAccountId = null;
       await syncStatus();
     } catch (err) {
       showMsg(err.message, true);
@@ -311,6 +314,17 @@
     }
   };
 
+  window.reauthAccount = function(id, label, phone) {
+    state.reauthAccountId = id;
+    switchLoginTab('phone');
+    if (phone) $('sms-phone').value = phone;
+    $('sms-label').value = label;
+    showMsg(`正在为账号【${label}】重新验证并更新凭据。验证通过后将原地更新该账号。`);
+    $('pane-phone').scrollIntoView({ block: 'start', behavior: 'smooth' });
+    $('sms-phone').focus();
+    toast(`已进入账号【${label}】重新验证模式`);
+  };
+
   // --- Account Pool Table ---
   window.loadAccounts = async function() {
     const tbody = $('accounts-table-body');
@@ -338,6 +352,7 @@
             <td class="py-3 px-4 font-mono text-[11px] text-slate-400">${exp}</td>
             <td class="py-3 px-4">${readyBadge}</td>
             <td class="py-3 px-4 text-right space-x-1.5">
+              <button onclick="reauthAccount('${acc.id}', '${acc.label}', '${acc.phone_number || ''}')" class="px-2.5 py-1 text-[11px] rounded-lg bg-sky-50 dark:bg-sky-950/50 hover:bg-sky-100 dark:hover:bg-sky-900/50 text-sky-600 dark:text-sky-400 border border-sky-200 dark:border-sky-800/40 transition">重新验证</button>
               <button onclick="checkAccount('${acc.id}')" class="px-2.5 py-1 text-[11px] rounded-lg border border-slate-200 dark:border-slate-800 hover:bg-slate-100 dark:hover:bg-slate-800 transition" title="只读探测 Wabi 上游状态">探测</button>
               <button onclick="toggleAccount('${acc.id}', ${!acc.enabled})" class="px-2.5 py-1 text-[11px] rounded-lg border border-slate-200 dark:border-slate-800 hover:bg-slate-100 dark:hover:bg-slate-800 transition">${acc.enabled ? '停用' : '启用'}</button>
               <button onclick="deleteAccount('${acc.id}')" class="px-2.5 py-1 text-[11px] rounded-lg border border-rose-200 dark:border-rose-900/40 text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/40 transition">删除</button>

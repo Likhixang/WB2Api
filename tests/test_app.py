@@ -45,6 +45,11 @@ def test_account_encryption_and_no_secret_echo(client):
     assert data_dir.get_account(account['id'])['refresh_token'] == secret
     toggled = client.patch('/admin/api/accounts/' + account['id'], headers=AH, json={'enabled': False})
     assert not toggled.json()['enabled']
+    reauth = client.put('/admin/api/accounts/' + account['id'] + '/reauth', headers=AH, json={
+        'label': 'CI fixture', 'refresh_token': 'new-secret', 'firebase_api_key': 'test-project-identifier'
+    })
+    assert reauth.status_code == 200
+    assert data_dir.get_account(account['id'])['refresh_token'] == 'new-secret'
     deleted = client.delete('/admin/api/accounts/' + account['id'], headers=AH)
     assert deleted.status_code == 200
     assert secret not in client.get('/admin/api/status', headers=AH).text
