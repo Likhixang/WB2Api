@@ -70,7 +70,6 @@ class Wabi:
         # another caller is waiting. Entries disappear when their last user exits.
         self._locks: dict[Any, tuple[asyncio.Lock, int]] = {}
         self._readers: set[asyncio.Task[None]] = set()
-        self._threads: dict[Any, str] = {}
         self._closed = False
 
     @staticmethod
@@ -402,18 +401,63 @@ class Wabi:
                     raise terminal.result()
                 # The stream is connected and independently consumed before any
                 # thread/message POST. All early events stay in the bounded queue.
-                thread_id = self._threads.get(account_id)
-                if not thread_id:
-                    thread = await bounded(self._json(
-                        "POST", self.base_url + "/api/v1/threads", headers=self._headers(account),
-                        json={"title": "WB2Api", "request_id": str(uuid.uuid4()), "kind": "group"},
+                # A new thread per HTTP request is mandatory: account-wide SSE
+                # may replay old messages, and client histories are supplied in full.
+                thread = await bounded(self._json(
+                    "POST", self.base_url + "/api/v1/threads", headers=self._headers(account),
+                    json={"title": "WB2Api", "request_id": str(uuid.uuid4()), "kind": "group"},
+                ))
+                thread_id = (thread.get("thread") or {}).get("id") or (thread.get("state") or {}).get("thread_id") or thread.get("id")
+                if not isinstance(thread_id, str) or not thread_id:
+                    raise UpstreamError("Thread creation returned no id", code="invalid_upstream_response")
+                # New group threads start an automatic opening turn. Posting
+                # while it runs lets Wabi coalesce the user prompt into that turn,
+                # so turn-ID filtering alone cannot separate the greeting. Never
+                # trust an initially idle snapshot: opening may not be scheduled
+                # yet. Consume a positively identified completed assistant message
+                # first; is_final_message can be false even for a finished opening.
+                def opening_event(event: dict[str, str] | UpstreamError) -> str | None:
+                    if isinstance(event, UpstreamError):
+                        raise event
+                    try:
+                        return mapper.opening_turn(event, thread_id)
+                    except ProtocolError as exc:
+                        raise UpstreamError(exc.message, exc.status, exc.code) from exc
+
+                opening_turn_id = None
+                while opening_turn_id is None:
+                    opening_turn_id = opening_event(await bounded(queue.get()))
+                    if terminal.done():
+                        raise terminal.result()
+                # Final SSE may precede the state commit. Poll the read-only
+                # endpoint until *all* work is idle, still draining bounded SSE
+                # so opening failures/disconnects cannot be silently ignored.
+                while True:
+                    if terminal.done():
+                        raise terminal.result()
+                    while not queue.empty():
+                        opening_event(queue.get_nowait())
+                    state = await bounded(self._json(
+                        "GET", self.base_url + "/api/v1/threads/" + quote(thread_id, safe="") + "/turn-state",
+                        headers=self._headers(account),
                     ))
-                    thread_id = (thread.get("thread") or {}).get("id") or (thread.get("state") or {}).get("thread_id") or thread.get("id")
-                    if not isinstance(thread_id, str) or not thread_id:
-                        raise UpstreamError("Thread creation returned no id", code="invalid_upstream_response")
-                    self._threads[account_id] = thread_id
-                if terminal.done():
-                    raise terminal.result()
+                    if (
+                        state.get("thread_id") != thread_id
+                        or "active_turn" not in state
+                        or not isinstance(state["active_turn"], (dict, type(None)))
+                        or not isinstance(state.get("queued_turns"), list)
+                        or not isinstance(state.get("has_background_work"), bool)
+                        or not isinstance(state.get("queue_paused"), bool)
+                    ):
+                        raise UpstreamError("Thread turn-state is invalid", code="invalid_upstream_response")
+                    if terminal.done():
+                        raise terminal.result()
+                    while not queue.empty():
+                        opening_event(queue.get_nowait())
+                    if (state["active_turn"] is None and not state["queued_turns"]
+                            and not state["has_background_work"] and not state["queue_paused"]):
+                        break
+                    await bounded(asyncio.sleep(0.05))
                 accepted = await bounded(self._json(
                     "POST", self.base_url + "/api/v1/threads/" + quote(thread_id, safe="") + "/messages",
                     headers=self._headers(account),
@@ -425,6 +469,8 @@ class Wabi:
                 turn_id = accepted.get("turn_id")
                 if not isinstance(turn_id, str) or not turn_id:
                     raise UpstreamError("Message acceptance returned no turn_id; message was not replayed", code="invalid_upstream_response")
+                if turn_id == opening_turn_id:
+                    raise UpstreamError("User message was merged into the opening turn; message was not replayed", code="upstream_turn_not_isolated")
                 while True:
                     event = await bounded(queue.get())
                     if isinstance(event, UpstreamError):

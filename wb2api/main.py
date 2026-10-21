@@ -15,10 +15,13 @@ from fastapi import Depends, FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from starlette.exceptions import HTTPException
 
+from .tool_compat import ToolAdapter, ToolProtocolError
+
 from .store import Store
+from .media import Media
 from .wabi import UpstreamError, Wabi
 
 VERSION = '0.1.0'
@@ -111,11 +114,36 @@ class ApiKeyToggle(Input):
     enabled: bool
 
 
+class CallFunction(Input):
+    model_config = ConfigDict(extra='forbid', str_strip_whitespace=False)
+    name: str = Field(pattern=r'^[A-Za-z0-9_-]{1,64}$')
+    arguments: str = Field(max_length=200000)
+
+
+class ToolCall(Input):
+    model_config = ConfigDict(extra='forbid', str_strip_whitespace=False)
+    id: str = Field(min_length=1, max_length=200)
+    type: str = Field(pattern='^function$')
+    function: CallFunction
+
+
 class Message(Input):
     # Preserve prompt whitespace, unlike control-plane fields.
     model_config = ConfigDict(extra='forbid', str_strip_whitespace=False)
-    role: str = Field(pattern='^(system|developer|user|assistant)$')
-    content: str = Field(max_length=200000)
+    role: str = Field(pattern='^(system|developer|user|assistant|tool)$')
+    content: str | None = Field(default=None, max_length=200000)
+    tool_calls: list[ToolCall] | None = Field(default=None, min_length=1, max_length=64)
+    tool_call_id: str | None = Field(default=None, min_length=1, max_length=200)
+
+    @model_validator(mode='after')
+    def valid_shape(self):
+        if self.role != 'assistant' and self.tool_calls is not None:
+            raise ValueError('Only assistant messages may contain tool_calls')
+        if (self.role == 'tool') != (self.tool_call_id is not None):
+            raise ValueError('Tool messages require tool_call_id')
+        if self.content is None and not (self.role == 'assistant' and self.tool_calls):
+            raise ValueError('Message content is required')
+        return self
 
 
 class Completion(Input):
@@ -123,6 +151,17 @@ class Completion(Input):
     messages: list[Message] = Field(min_length=1, max_length=200)
     stream: bool = False
     user: str | None = Field(default=None, max_length=200)
+    tools: list[dict] | None = Field(default=None, max_length=64)
+    tool_choice: str | dict | None = None
+    parallel_tool_calls: bool = True
+
+
+class ImageGeneration(Input):
+    model_config = ConfigDict(extra='forbid', str_strip_whitespace=False)
+    model: str = 'wabi-image'
+    prompt: str = Field(min_length=1, max_length=200000)
+    n: int = Field(default=1, strict=True, ge=1, le=1)
+    response_format: str = Field(default='url', pattern='^url$')
 
 
 def configured(protocol: dict) -> bool:
@@ -159,6 +198,7 @@ def create_app(overrides: dict | None = None) -> FastAPI:
             raise RuntimeError('Management and inference keys must differ')
         app.state.store = Store(config['data_dir'], config['encryption_key'])
         app.state.wabi = Wabi(app.state.store, config)
+        app.state.media = Media(app.state.wabi)
         app.state.logins = {}
         app.state.counter = 0
         app.state.login_lock = asyncio.Lock()
@@ -217,6 +257,10 @@ def create_app(overrides: dict | None = None) -> FastAPI:
     @app.exception_handler(UpstreamError)
     async def upstream_error(request, exc):
         return error(str(exc), getattr(exc, 'status', 502), getattr(exc, 'code', 'upstream_error'))
+
+    @app.exception_handler(ToolProtocolError)
+    async def tool_error(request, exc):
+        return error(str(exc), exc.status, exc.code)
 
     @app.exception_handler(KeyError)
     async def not_found(request, exc):
@@ -514,18 +558,73 @@ def create_app(overrides: dict | None = None) -> FastAPI:
         return {
             'object': 'list',
             'data': [
-                {'id': 'wabi', 'object': 'model', 'created': 0, 'owned_by': 'wabi'},
-                {'id': 'default', 'object': 'model', 'created': 0, 'owned_by': 'wabi'},
+                {'id': 'wabi', 'object': 'model', 'created': 0, 'owned_by': 'wabi',
+                 'capability': 'chat', 'capability_alias': True, 'available': True},
+                {'id': 'wabi-image', 'object': 'model', 'created': 0, 'owned_by': 'wabi',
+                 'capability': 'image', 'capability_alias': True, 'available': True},
+                {'id': 'wabi-video', 'object': 'model', 'created': 0, 'owned_by': 'wabi',
+                 'capability': 'video', 'capability_alias': True, 'available': False,
+                 'experimental': True, 'unavailable_reason': 'not_verified_requires_billing_authorization'},
             ]
         }
 
+    def select_account():
+        accounts = [account for account in app.state.store.list_accounts() if account['ready']]
+        if not accounts:
+            raise UpstreamError('No enabled account with usable credentials', 503, 'no_account')
+        account = accounts[app.state.counter % len(accounts)]
+        app.state.counter += 1
+        return account['id']
+
+    def video_unavailable():
+        return error('Video generation is not verified and is unavailable; an authorized billing test is required',
+                     501, 'video_not_verified')
+
+    @app.post('/v1/images/generations', dependencies=[Depends(inference)])
+    async def images(body: ImageGeneration):
+        if body.model == 'wabi-video':
+            return video_unavailable()
+        if body.model != 'wabi-image':
+            return error('Image generation requires the wabi-image capability alias', 400, 'model_not_found')
+        urls = await app.state.media.generate_image(select_account(), body.prompt)
+        return {'created': int(time.time()), 'data': [{'url': url} for url in urls]}
+
     @app.post('/v1/chat/completions', dependencies=[Depends(inference)])
     async def completion(body: Completion, request: Request):
+        if body.model == 'wabi-video':
+            return video_unavailable()
+        if body.model == 'wabi-image':
+            if (body.tools is not None or body.tool_choice is not None
+                    or 'parallel_tool_calls' in body.model_fields_set
+                    or any(message.role == 'tool' or message.tool_calls for message in body.messages)):
+                return error('Image generation cannot be combined with client tools', 400, 'unsupported_media_tools')
+            prompt = ToolAdapter().history_prompt(body.messages)
+            if len(prompt) > 200000:
+                return error('Combined prompt exceeds 200000 characters', 413, 'body_too_large')
+            urls = await app.state.media.generate_image(select_account(), prompt)
+            content = '\n'.join('![Generated image](<' + url + '>)' for url in urls)
+            identity, created = 'chatcmpl-' + uuid.uuid4().hex, int(time.time())
+            if not body.stream:
+                return {'id': identity, 'object': 'chat.completion', 'created': created, 'model': 'wabi-image',
+                        'choices': [{'index': 0, 'message': {'role': 'assistant', 'content': content}, 'finish_reason': 'stop'}]}
+
+            async def media_events():
+                for delta, finish in [({'role': 'assistant'}, None), ({'content': content}, None), ({}, 'stop')]:
+                    chunk = {'id': identity, 'object': 'chat.completion.chunk', 'created': created, 'model': 'wabi-image',
+                             'choices': [{'index': 0, 'delta': delta, 'finish_reason': finish}]}
+                    yield 'data: ' + json.dumps(chunk, ensure_ascii=False) + '\n\n'
+                yield 'data: [DONE]\n\n'
+            return StreamingResponse(media_events(), media_type='text/event-stream', headers={
+                'X-Accel-Buffering': 'no', 'Cache-Control': 'no-cache', 'X-WB2Api-Media-Stream': 'buffered'})
         if body.model not in ('wabi', 'default', 'sabi'):
-            return error(f'Model {body.model} not supported; use "wabi" or "default"', 400, 'model_not_found')
-        if body.messages[-1].role != 'user':
-            return error('The last message must have user role', 400, 'invalid_request')
-        if sum(len(message.content) for message in body.messages) > 200000:
+            return error('Model not supported; use wabi, wabi-image or wabi-video (unavailable)', 400, 'model_not_found')
+        adapter = ToolAdapter(body.tools, body.tool_choice, body.parallel_tool_calls)
+        prompt = adapter.history_prompt(body.messages)
+        tool_mode = bool(body.tools) or body.tool_choice is not None or any(
+            message.role == 'tool' or message.tool_calls for message in body.messages)
+        if tool_mode:
+            prompt = adapter.instruction() + prompt
+        if len(prompt) > 200000:
             return error('Combined prompt exceeds 200000 characters', 413, 'body_too_large')
         protocol = json.loads(app.state.store.get_setting('protocol', json.dumps(DEFAULT_PROTOCOL)))
         if not configured(protocol):
@@ -535,8 +634,6 @@ def create_app(overrides: dict | None = None) -> FastAPI:
             return error('No enabled account with usable credentials', 503, 'no_account')
         account = accounts[app.state.counter % len(accounts)]
         app.state.counter += 1
-        prompt = body.messages[0].content if len(body.messages) == 1 else '\n\n'.join(
-            f'[{message.role}]\n{message.content}' for message in body.messages)
         iterator = app.state.wabi.stream_chat(account['id'], prompt, protocol)
         completion_id = 'chatcmpl-' + uuid.uuid4().hex
         created = int(time.time())
@@ -545,13 +642,31 @@ def create_app(overrides: dict | None = None) -> FastAPI:
             return {'id': completion_id, 'object': 'chat.completion.chunk', 'created': created,
                     'model': 'wabi', 'choices': [{'index': 0, 'delta': delta, 'finish_reason': finish}]}
 
-        if not body.stream:
+        if not body.stream or tool_mode:
             try:
                 content = ''.join([text async for text in iterator])
             finally:
                 await iterator.aclose()
-            return {'id': completion_id, 'object': 'chat.completion', 'created': created, 'model': 'wabi',
-                    'choices': [{'index': 0, 'message': {'role': 'assistant', 'content': content}, 'finish_reason': 'stop'}]}
+            if not content:
+                return error('Upstream completed without text', 502, 'empty_response')
+            message, finish = adapter.parse(content) if tool_mode else ({'role': 'assistant', 'content': content}, 'stop')
+            if not body.stream:
+                return {'id': completion_id, 'object': 'chat.completion', 'created': created, 'model': 'wabi',
+                        'choices': [{'index': 0, 'message': message, 'finish_reason': finish}]}
+
+            async def buffered_events():
+                def encode(data):
+                    return 'data: ' + json.dumps(data, ensure_ascii=False) + '\n\n'
+                yield encode(chunk({'role': 'assistant'}))
+                if finish == 'tool_calls':
+                    for index, call in enumerate(message['tool_calls']):
+                        yield encode(chunk({'tool_calls': [{'index': index, **call}]}))
+                else:
+                    yield encode(chunk({'content': message['content']}))
+                yield encode(chunk({}, finish))
+                yield 'data: [DONE]\n\n'
+            return StreamingResponse(buffered_events(), media_type='text/event-stream', headers={
+                'X-Accel-Buffering': 'no', 'Cache-Control': 'no-cache', 'X-WB2Api-Tool-Stream': 'buffered'})
 
         # Prefetch so protocol/authentication/connection failures still return proper HTTP errors.
         try:

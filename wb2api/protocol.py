@@ -104,7 +104,9 @@ class ProtocolMapper:
     """A mapper belongs to exactly one accepted chat turn.
 
     ``consume(event, thread_id, turn_id)`` returns ``(delta_or_None, done)``.
-    Missing turn IDs are allowed only with an explicitly matching thread ID.
+    Turn IDs must match, either at the configured path or ``message.turn_id``.
+    Thread-only deltas are ignored, never attributed by guesswork; use correlated
+    final message blocks as a fallback when the upstream omits delta turn IDs.
     Snapshot mode supports append-only snapshots; revisions cannot be represented
     as OpenAI deltas and fail explicitly rather than duplicating/retracting text.
     """
@@ -150,11 +152,11 @@ class ProtocolMapper:
         self.max_text_bytes = max_text_bytes
         self.text_bytes = 0
         self.snapshot = ""
+        self.emitted = ""
         self.has_text = False
 
-    def consume(
-        self, event: dict[str, str], thread_id: str, turn_id: str
-    ) -> tuple[str | None, bool]:
+    @staticmethod
+    def _payload(event: dict[str, str]) -> dict[str, Any]:
         try:
             payload = json.loads(
                 event["data"], parse_constant=_reject_constant, object_pairs_hook=_unique_object
@@ -163,16 +165,61 @@ class ProtocolMapper:
             raise ProtocolError("SSE data is not a strict JSON object") from exc
         if not isinstance(payload, dict):
             raise ProtocolError("SSE data must be a JSON object")
+        return payload
+
+    def opening_turn(self, event: dict[str, str], thread_id: str) -> str | None:
+        """Observe completion, not text, before the first user POST.
+
+        An initial idle snapshot can race with scheduling the automatic group
+        opening. Require a positively identified completed assistant message first;
+        callers must then confirm authoritative turn-state is idle. Wabi can mark
+        this message is_final_message=False even when the opening has completed.
+        """
+        payload = self._payload(event)
+        if extract_path(payload, self.paths["thread_id_path"]) != thread_id:
+            return None
+        nested_thread = extract_path(payload, "message.thread_id")
+        if nested_thread is not None and nested_thread != thread_id:
+            return None
+        kind = extract_path(payload, self.paths["event_type_path"], event.get("event", "message"))
+        if not isinstance(kind, str):
+            raise ProtocolError("SSE event type must be a string")
+        if kind in self.events["error_events"]:
+            raise ProtocolError("Wabi reported an error during thread opening", "upstream_turn_error")
+        if kind not in self.events["done_events"]:
+            return None
+        message = payload.get("message")
+        if (not isinstance(message, dict) or message.get("role") != "assistant"
+                or message.get("status") != "completed"):
+            return None
+        turn = message.get("turn_id")
+        outer_turn = extract_path(payload, self.paths["turn_id_path"])
+        if not isinstance(turn, str) or not turn or (outer_turn is not None and outer_turn != turn):
+            return None
+        # Empty message_finished initialization events are not completion proof.
+        blocks = message.get("blocks")
+        return turn if isinstance(blocks, list) and blocks else None
+
+    def consume(
+        self, event: dict[str, str], thread_id: str, turn_id: str
+    ) -> tuple[str | None, bool]:
+        payload = self._payload(event)
         thread = extract_path(payload, self.paths["thread_id_path"])
         turn = extract_path(payload, self.paths["turn_id_path"])
-        # Never admit global events, and never let a matching turn override a
-        # conflicting thread. Do not coerce upstream IDs to another type.
+        nested_turn = extract_path(payload, "message.turn_id")
+        nested_thread = extract_path(payload, "message.thread_id")
+        if nested_thread is not None and nested_thread != thread_id:
+            return None, False
+        if nested_turn is not None and nested_turn != turn_id:
+            return None, False
+        if turn is None:
+            turn = nested_turn
+        # A thread alone is not sufficient: greetings, replayed previous turns,
+        # and empty message_finished events can all share its ID. Turnless deltas
+        # are deliberately ignored; correlated final blocks provide a safe fallback.
         if thread is not None and thread != thread_id:
             return None, False
-        if turn is not None:
-            if turn != turn_id:
-                return None, False
-        elif thread != thread_id:
+        if turn != turn_id:
             return None, False
         kind = extract_path(payload, self.paths["event_type_path"], _MISSING)
         if kind is _MISSING:
@@ -183,15 +230,27 @@ class ProtocolMapper:
             # Untrusted upstream payloads may contain secrets or user text.
             raise ProtocolError("Wabi reported an error for this turn", "upstream_turn_error")
         if kind in self.events["done_events"]:
+            blocks = extract_path(payload, "message.blocks")
+            final_text = ""
+            if isinstance(blocks, list):
+                texts = [block.get("text") for block in blocks if isinstance(block, dict) and block.get("type") == "text"]
+                if any(not isinstance(text, str) for text in texts):
+                    raise ProtocolError("Final text block is not a string")
+                final_text = "".join(texts)
+            if final_text:
+                if not final_text.startswith(self.emitted):
+                    raise ProtocolError("Final message revised emitted text", "snapshot_diverged")
+                delta = final_text[len(self.emitted):]
+                if len(final_text.encode("utf-8")) > self.max_text_bytes:
+                    raise ProtocolError("Generated text exceeds the size limit", "response_too_large")
+                self.has_text = True
+                return delta or None, True
+            if isinstance(blocks, list) and not final_text:
+                return None, False
             if not self.has_text:
-                fallback_text = ""
-                blocks = extract_path(payload, "message.blocks")
-                if isinstance(blocks, list):
-                    fallback_text = "".join(b.get("text", "") for b in blocks if isinstance(b, dict) and b.get("type") == "text")
-                if fallback_text:
-                    self.has_text = True
-                    return fallback_text, True
-                raise ProtocolError("Wabi completed the turn without text", "empty_upstream_response")
+                # Empty initialization events are not evidence that our response
+                # completed. EOF/timeout still produces a real upstream error.
+                return None, False
             return None, True
         if kind not in self.events["delta_events"]:
             return None, False
@@ -209,6 +268,7 @@ class ProtocolMapper:
         if self.text_bytes > self.max_text_bytes:
             raise ProtocolError("Generated text exceeds the size limit", "response_too_large")
         if delta:
+            self.emitted += delta
             self.has_text = True
             return delta, False
         return None, False
