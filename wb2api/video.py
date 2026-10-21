@@ -14,7 +14,7 @@ import uuid
 
 import httpx
 
-from .wabi import UpstreamError, Wabi
+from .wabi import UpstreamError, Wabi, thread_title
 
 # Exact origin observed in the verified private-video capture, not *.cloudfront.net.
 VIDEO_HOSTS = frozenset({'d34c7q5wjf4spy.cloudfront.net'})
@@ -204,7 +204,7 @@ class Video:
                         raise UpstreamError('Account has no persistent device ID', 400, 'missing_device_id')
                     headers = w._headers(account)
                     created = await w._json('POST', w.base_url + '/api/v1/threads', headers=headers,
-                                            json={'title': '', 'request_id': str(uuid.uuid4()), 'kind': 'private'})
+                                            json={'title': thread_title('video'), 'request_id': str(uuid.uuid4()), 'kind': 'private'})
                     thread = created.get('thread')
                     if not isinstance(thread, dict):
                         raise _protocol()

@@ -63,8 +63,9 @@ class Fixture:
         if self.fail == (request.method, path):
             raise httpx.ReadError('PRIVATE_DO_NOT_ECHO', request=request)
         if request.method == 'POST' and path == '/api/v1/threads':
-            assert json.loads(request.content) == {
-                'title': '', 'request_id': json.loads(request.content)['request_id'], 'kind': 'private'}
+            body = json.loads(request.content)
+            assert body['title'].startswith('Video ')
+            assert set(body) == {'title', 'request_id', 'kind'} and body['kind'] == 'private'
             return httpx.Response(200, json={'thread': {'id': THREAD, 'kind': 'private'}})
         if path == '/api/v1/threads/' + THREAD:
             return httpx.Response(200, json={'thread': {'id': THREAD, 'kind': 'private'}})

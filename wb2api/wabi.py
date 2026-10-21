@@ -25,6 +25,12 @@ import httpx
 from .protocol import ProtocolError, ProtocolMapper, parse_sse
 
 
+def thread_title(kind: str = "chat") -> str:
+    """Distinct neutral labels; never include client history or credentials."""
+    label = {"chat": "Chat", "image": "Image", "video": "Video"}.get(kind, "Chat")
+    return label + " " + time.strftime("%Y%m%d-%H%M%S", time.gmtime()) + " " + uuid.uuid4().hex[:8]
+
+
 class UpstreamError(Exception):
     def __init__(
         self, message: str, status: int = 502, code: str = "upstream_error"
@@ -407,7 +413,7 @@ class Wabi:
                 # may replay old messages, and client histories are supplied in full.
                 thread = await bounded(self._json(
                     "POST", self.base_url + "/api/v1/threads", headers=self._headers(account),
-                    json={"title": "", "request_id": str(uuid.uuid4()), "kind": "group"},
+                    json={"title": thread_title(), "request_id": str(uuid.uuid4()), "kind": "group"},
                 ))
                 thread_id = (thread.get("thread") or {}).get("id") or (thread.get("state") or {}).get("thread_id") or thread.get("id")
                 if not isinstance(thread_id, str) or not thread_id:

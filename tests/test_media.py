@@ -235,7 +235,7 @@ def test_full_verified_media_flow_and_no_retries_or_downloads():
     assert result == [URL]
     assert len(transport.posts) == 2
     thread, message = transport.posts
-    assert thread[1]['title'] == '' and thread[1]['kind'] == 'group'
+    assert thread[1]['title'].startswith('Image ') and thread[1]['kind'] == 'group'
     assert message[1]['attachment_ids'] == [] and message[1]['source'] == 'typed'
     assert message[1]['page_context'] == {'app_surface': 'chat_only'}
     assert 'a red paper boat' in message[1]['blocks'][0]['text']
