@@ -21,7 +21,7 @@
 | `wabi-image` | 圖片生成 | 可用 |
 | `wabi-video` | 影片生成 | 尚未啟用，生成流程尚未驗證 |
 
-以上名稱依能力區分，不代表能選擇底層基礎模型。Function Calling 透過提示詞相容，由用戶端執行回傳的工具呼叫。目前沒有經過驗證的思考強度控制。
+以上名稱依能力區分，不代表能選擇底層基礎模型。Function Calling 透過提示詞相容，由用戶端執行回傳的工具呼叫。可傳入 `reasoning_effort`（`none`、`minimal`、`low`、`medium`、`high`、`xhigh`），透過提示詞引導思考強度，不代表底層 Token 預算。
 
 ## 快速部署
 

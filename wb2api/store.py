@@ -194,13 +194,27 @@ class Store:
         self.db.commit()
         return {'id': key_id, 'name': name, 'key': token, 'enabled': True, 'created_at': now}
 
-    def toggle_api_key(self, key_id: str, enabled: bool) -> dict:
-        self.db.execute('UPDATE api_keys SET enabled=? WHERE id=?', (int(enabled), key_id))
+    def update_api_key(self, key_id: str, *, name: str | None = None, enabled: bool | None = None) -> dict:
+        fields, values = [], []
+        if name is not None:
+            if not isinstance(name, str) or not name.strip() or len(name.strip()) > 100:
+                raise ValueError('Invalid API key name')
+            fields.append('name=?')
+            values.append(name.strip())
+        if enabled is not None:
+            fields.append('enabled=?')
+            values.append(int(enabled))
+        if not fields:
+            raise ValueError('No API key fields to update')
+        cursor = self.db.execute('UPDATE api_keys SET ' + ','.join(fields) + ' WHERE id=?', (*values, key_id))
+        if cursor.rowcount != 1:
+            raise KeyError(key_id)
         self.db.commit()
         row = self.db.execute('SELECT id, name, key, enabled, created_at FROM api_keys WHERE id=?', (key_id,)).fetchone()
-        if not row:
-            raise KeyError(key_id)
         return dict(row, enabled=bool(row['enabled']))
+
+    def toggle_api_key(self, key_id: str, enabled: bool) -> dict:
+        return self.update_api_key(key_id, enabled=enabled)
 
     def delete_api_key(self, key_id: str):
         self.db.execute('DELETE FROM api_keys WHERE id=?', (key_id,))

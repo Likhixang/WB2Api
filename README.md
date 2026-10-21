@@ -21,7 +21,7 @@ Use Wabi through an OpenAI-compatible API, with a web console for accounts and A
 | `wabi-image` | Image generation | Available |
 | `wabi-video` | Video generation | Not enabled; generation has not been verified |
 
-These are capability aliases, not selectable foundation models. Function Calling uses prompts rather than a native Wabi API; the client executes the returned calls. There is no verified reasoning-effort control.
+These are capability aliases, not selectable foundation models. Function Calling uses prompts rather than a native Wabi API; the client executes the returned calls. Optional `reasoning_effort` (`none`, `minimal`, `low`, `medium`, `high`, `xhigh`) guides response effort through prompts, not a native token budget.
 
 ## Quick start
 

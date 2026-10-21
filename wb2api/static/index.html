@@ -11,6 +11,9 @@
         try {
           t = localStorage.getItem("wb2api_theme") || "system";
         } catch {}
+        let cached = false;
+        try { cached = !!localStorage.getItem("wb2api_admin_key"); } catch {}
+        document.documentElement.dataset.session = cached ? "checking" : "login";
         document.documentElement.classList.toggle(
           "dark",
           t === "dark" ||
@@ -67,6 +70,17 @@
         ></a>
       </div>
     </header>
+    <section id="session-screen" class="session-screen" aria-labelledby="session-title">
+      <div class="panel session-card">
+        <i data-lucide="shield-check"></i>
+        <h1 id="session-title">正在验证已保存的访问凭据</h1>
+        <p id="session-message" class="muted" role="status">验证通过后将直接进入工作台，请稍候。</p>
+        <div id="session-actions" class="toolbar hidden">
+          <button id="btn-session-retry" class="primary" onclick="resumeSession()">重试验证</button>
+          <button onclick="showManualLogin()">手动登录</button>
+        </div>
+      </div>
+    </section>
     <section id="lock-screen" class="lock-screen">
       <div class="login-intro">
         <p class="eyebrow">WB2API / WORKSPACE</p>
@@ -106,9 +120,7 @@
         </div>
         <div id="nav-actions" class="toolbar hidden">
           <button onclick="openTokenModal()">
-            <i data-lucide="key-round"></i>API Keys</button
-          ><button onclick="openProtocolModal()">
-            <i data-lucide="sliders-horizontal"></i>协议配置
+            <i data-lucide="key-round"></i>API Keys
           </button>
         </div>
       </div>
@@ -125,11 +137,7 @@
           <span>API 密钥</span><strong id="stat-keys">—</strong
           ><small>客户端访问凭证</small>
         </div>
-        <div class="stat">
-          <span>协议映射</span
-          ><strong class="stat-word" id="stat-protocol">—</strong
-          ><small>SSE 事件转换</small>
-        </div>
+
         <div class="stat">
           <span>管理服务</span
           ><strong class="stat-word" id="stat-health">待检查</strong
@@ -148,6 +156,7 @@
               <p class="muted">查看凭据状态，管理每个账号的可用性。</p>
             </div>
             <div class="toolbar">
+              <button class="primary" onclick="openAddAccount()"><i data-lucide="plus"></i>添加账号</button>
               <button
                 onclick="exportAccountsJson()"
                 title="导出包含敏感凭据的 JSON"
@@ -197,14 +206,11 @@
             >
           </div>
         </section>
-        <aside class="panel add-panel" aria-labelledby="add-title">
-          <div class="panel-heading">
-            <div>
-              <p class="section-index">02 / ADD ACCOUNT</p>
-              <h2 id="add-title">添加账号</h2>
-              <p class="muted">短信登录，按提示完成二次验证。</p>
-            </div>
-          </div>
+        <details id="add-account" class="panel add-panel" aria-labelledby="add-title">
+          <summary>
+            <span><i data-lucide="user-plus"></i><span id="add-title">添加账号 · 短信登录或导入凭据</span></span>
+            <span class="muted">展开表单 <i data-lucide="chevron-down"></i></span>
+          </summary>
           <div class="panel-content">
             <div id="reauth-notice" class="notice warning hidden">
               <span id="reauth-label"></span
@@ -327,7 +333,7 @@
               </button>
             </div>
           </div>
-        </aside>
+        </details>
       </div>
       <section class="connection-bar panel">
         <div>
@@ -362,7 +368,7 @@
                 </button>
               </div>
             </div>
-            <div><label>能力入口</label><code>wabi · 对话 / 工具兼容<br />wabi-image · 图片生成<br />wabi-video · 视频（未验证，暂不可用）</code></div>
+            <div><label>能力入口</label><code>wabi · 对话 / 工具兼容<br />wabi-image · 图片生成<br />wabi-video · 视频（未验证，暂不可用）</code><p class="muted">reasoning_effort 可选：none / minimal / low / medium / high / xhigh；通过提示词引导思考强度，非原生 Token 预算。</p></div>
             <div>
               <label>支持接口</label
               ><code>/v1/chat/completions<br />/v1/images/generations<br />/v1/models</code>
@@ -375,6 +381,14 @@
             </button>
           </div>
           <pre id="curl-box"></pre>
+        </div>
+      </details>
+      <details id="advanced-settings" class="panel connection-guide">
+        <summary><span><i data-lucide="sliders-horizontal"></i>高级设置</span><span class="muted">按需配置 <i data-lucide="chevron-down"></i></span></summary>
+        <div class="advanced-content">
+          <div><h3>SSE 协议映射 <span id="protocol-state" class="muted">待检查</span></h3>
+          <p class="muted">将 Wabi 上游流式事件转换为 OpenAI 格式。通常无需修改；仅在上游事件格式变化、流式文本无法正常解析时调整。</p></div>
+          <button onclick="openProtocolModal()">编辑 SSE 映射</button>
         </div>
       </details>
       <footer class="workspace-footer">

@@ -19,6 +19,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from starlette.exceptions import HTTPException
 
 from .tool_compat import ToolAdapter, ToolProtocolError
+from .reasoning import ReasoningEffort, effort_hint
 
 from .store import Store
 from .media import Media
@@ -110,8 +111,15 @@ class ApiKeyInput(Input):
     key: str = Field(default='', max_length=200)
 
 
-class ApiKeyToggle(Input):
-    enabled: bool
+class ApiKeyUpdate(Input):
+    name: str | None = Field(default=None, min_length=1, max_length=100)
+    enabled: bool | None = None
+
+    @model_validator(mode='after')
+    def require_update(self):
+        if not self.model_fields_set or any(getattr(self, field) is None for field in self.model_fields_set):
+            raise ValueError('Provide a non-null name or enabled value')
+        return self
 
 
 class CallFunction(Input):
@@ -154,6 +162,7 @@ class Completion(Input):
     tools: list[dict] | None = Field(default=None, max_length=64)
     tool_choice: str | dict | None = None
     parallel_tool_calls: bool = True
+    reasoning_effort: ReasoningEffort | None = None
 
 
 class ImageGeneration(Input):
@@ -345,8 +354,8 @@ def create_app(overrides: dict | None = None) -> FastAPI:
         return app.state.store.add_api_key(body.name, body.key)
 
     @app.patch('/admin/api/keys/{key_id}', dependencies=[Depends(admin)])
-    async def toggle_key(key_id: str, body: ApiKeyToggle):
-        return app.state.store.toggle_api_key(key_id, body.enabled)
+    async def update_key(key_id: str, body: ApiKeyUpdate):
+        return app.state.store.update_api_key(key_id, **body.model_dump(exclude_unset=True))
 
     @app.delete('/admin/api/keys/{key_id}', dependencies=[Depends(admin)])
     async def delete_key(key_id: str):
@@ -564,7 +573,7 @@ def create_app(overrides: dict | None = None) -> FastAPI:
                  'capability': 'image', 'capability_alias': True, 'available': True},
                 {'id': 'wabi-video', 'object': 'model', 'created': 0, 'owned_by': 'wabi',
                  'capability': 'video', 'capability_alias': True, 'available': False,
-                 'experimental': True, 'unavailable_reason': 'not_verified_requires_billing_authorization'},
+                 'experimental': True, 'unavailable_reason': 'video_not_verified'},
             ]
         }
 
@@ -577,7 +586,7 @@ def create_app(overrides: dict | None = None) -> FastAPI:
         return account['id']
 
     def video_unavailable():
-        return error('Video generation is not verified and is unavailable; an authorized billing test is required',
+        return error('Video generation has not yet been verified through this adapter',
                      501, 'video_not_verified')
 
     @app.post('/v1/images/generations', dependencies=[Depends(inference)])
@@ -594,6 +603,8 @@ def create_app(overrides: dict | None = None) -> FastAPI:
         if body.model == 'wabi-video':
             return video_unavailable()
         if body.model == 'wabi-image':
+            if body.reasoning_effort is not None:
+                return error('Prompt effort control is supported for text chat only', 400, 'unsupported_media_reasoning')
             if (body.tools is not None or body.tool_choice is not None
                     or 'parallel_tool_calls' in body.model_fields_set
                     or any(message.role == 'tool' or message.tool_calls for message in body.messages)):
@@ -619,7 +630,8 @@ def create_app(overrides: dict | None = None) -> FastAPI:
         if body.model not in ('wabi', 'default', 'sabi'):
             return error('Model not supported; use wabi, wabi-image or wabi-video (unavailable)', 400, 'model_not_found')
         adapter = ToolAdapter(body.tools, body.tool_choice, body.parallel_tool_calls)
-        prompt = adapter.history_prompt(body.messages)
+        prompt = effort_hint(body.reasoning_effort) + adapter.history_prompt(body.messages)
+        reasoning_headers = {'X-WB2Api-Reasoning-Mode': 'prompt', 'X-WB2Api-Reasoning-Effort': body.reasoning_effort} if body.reasoning_effort is not None else {}
         tool_mode = bool(body.tools) or body.tool_choice is not None or any(
             message.role == 'tool' or message.tool_calls for message in body.messages)
         if tool_mode:
@@ -651,8 +663,8 @@ def create_app(overrides: dict | None = None) -> FastAPI:
                 return error('Upstream completed without text', 502, 'empty_response')
             message, finish = adapter.parse(content) if tool_mode else ({'role': 'assistant', 'content': content}, 'stop')
             if not body.stream:
-                return {'id': completion_id, 'object': 'chat.completion', 'created': created, 'model': 'wabi',
-                        'choices': [{'index': 0, 'message': message, 'finish_reason': finish}]}
+                return JSONResponse({'id': completion_id, 'object': 'chat.completion', 'created': created, 'model': 'wabi',
+                        'choices': [{'index': 0, 'message': message, 'finish_reason': finish}]}, headers=reasoning_headers)
 
             async def buffered_events():
                 def encode(data):
@@ -666,7 +678,7 @@ def create_app(overrides: dict | None = None) -> FastAPI:
                 yield encode(chunk({}, finish))
                 yield 'data: [DONE]\n\n'
             return StreamingResponse(buffered_events(), media_type='text/event-stream', headers={
-                'X-Accel-Buffering': 'no', 'Cache-Control': 'no-cache', 'X-WB2Api-Tool-Stream': 'buffered'})
+                'X-Accel-Buffering': 'no', 'Cache-Control': 'no-cache', 'X-WB2Api-Tool-Stream': 'buffered', **reasoning_headers})
 
         # Prefetch so protocol/authentication/connection failures still return proper HTTP errors.
         try:
@@ -697,7 +709,7 @@ def create_app(overrides: dict | None = None) -> FastAPI:
             finally:
                 await iterator.aclose()
         return StreamingResponse(events(), media_type='text/event-stream',
-                                 headers={'X-Accel-Buffering': 'no', 'Cache-Control': 'no-cache'})
+                                 headers={'X-Accel-Buffering': 'no', 'Cache-Control': 'no-cache', **reasoning_headers})
 
     return app
 

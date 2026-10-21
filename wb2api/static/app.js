@@ -31,6 +31,7 @@
     pendingGoogle: null,
     tokens: [],
   };
+  let sessionAttempt = 0;
 
   // System is the default; an explicit preference survives reloads.
   const scheme = window.matchMedia("(prefers-color-scheme: dark)");
@@ -110,6 +111,7 @@
 
   // --- HTTP Helper ---
   async function api(path, { method = "GET", body, auth = true } = {}) {
+    const requestKey = state.key;
     const headers = { Accept: "application/json" };
     if (auth) {
       if (!state.key) throw new Error("请先解锁控制台");
@@ -124,6 +126,10 @@
       body: body !== undefined ? JSON.stringify(body) : undefined,
       signal: AbortSignal.timeout(30000),
     });
+    if (res.status === 401 && auth && path === "/admin/api/status") {
+      if (state.key === requestKey) lock("管理员密钥无效或已过期，请重新解锁");
+      throw new Error("管理员密钥无效或已过期，请重新解锁");
+    }
     const text = await res.text();
     let data = null;
     if (text) {
@@ -136,7 +142,7 @@
     if (res.status === 401 && auth) {
       const isActualAdmin401 =
         data?.detail === "Invalid admin key" || path === "/admin/api/status";
-      if (isActualAdmin401) {
+      if (isActualAdmin401 && state.key === requestKey) {
         lock("管理员密钥无效或已过期，请重新解锁");
         throw new Error("未授权，请重新解锁");
       }
@@ -154,6 +160,9 @@
 
   // --- Lock / Unlock ---
   window.lock = function (reason = "") {
+    sessionAttempt++;
+    document.documentElement.dataset.session = "login";
+    $("add-account").open = false;
     closeModal();
     cancelReauth();
     state.key = "";
@@ -180,40 +189,81 @@
     if (window.lucide) lucide.createIcons();
   };
 
+  async function enterWorkspace(status, attempt) {
+    if (attempt !== sessionAttempt || !state.key) return;
+    state.status = status;
+    document.documentElement.dataset.session = "authenticated";
+    $("lock-screen").classList.add("hidden");
+    $("app-shell").classList.remove("hidden");
+    $("nav-actions").classList.remove("hidden");
+    $("btn-logout").classList.remove("hidden");
+    $("dashboard-error").classList.add("hidden");
+    renderDashboard(status);
+    renderAccounts(status.accounts || []);
+    $("admin-key").value = "";
+    renderCurl();
+    $("app-shell").focus();
+    await loadTokens();
+  }
+
+  window.showManualLogin = function () {
+    sessionAttempt++;
+    state.key = "";
+    document.documentElement.dataset.session = "login";
+    $("lock-screen").classList.remove("hidden");
+    $("unlock-error").classList.add("hidden");
+    $("admin-key").focus();
+  };
+
+  window.resumeSession = async function () {
+    const key = storage.get("wb2api_admin_key");
+    if (!key) return showManualLogin();
+    const attempt = ++sessionAttempt;
+    state.key = key;
+    document.documentElement.dataset.session = "checking";
+    $("session-title").textContent = "正在验证已保存的访问凭据";
+    $("session-message").textContent = "验证通过后将直接进入工作台，请稍候。";
+    $("session-actions").classList.add("hidden");
+    $("btn-session-retry").disabled = true;
+    try {
+      const status = await api("/admin/api/status");
+      await enterWorkspace(status, attempt);
+    } catch (err) {
+      if (attempt !== sessionAttempt) return;
+      $("session-title").textContent = "暂时无法验证访问凭据";
+      $("session-message").textContent = `网络或服务暂不可用：${err.message}。已保留浏览器凭据，可重试或手动登录。`;
+      $("session-actions").classList.remove("hidden");
+    } finally {
+      $("btn-session-retry").disabled = false;
+    }
+  };
+
   window.handleUnlock = async function (e) {
     if (e) e.preventDefault();
     const key = $("admin-key").value.trim();
     if (!key) return;
+    const attempt = ++sessionAttempt;
     const btn = $("btn-unlock");
     btn.disabled = true;
     btn.innerHTML = `<i data-lucide="loader" class="w-4 h-4 animate-spin"></i><span>解锁中…</span>`;
-    if (window.lucide) lucide.createIcons({ root: btn });
+    icons();
     $("unlock-error").classList.add("hidden");
     try {
       state.key = key;
       const status = await api("/admin/api/status");
-      state.status = status;
+      if (attempt !== sessionAttempt) return;
       storage.set("wb2api_admin_key", key);
-      $("lock-screen").classList.add("hidden");
-      $("app-shell").classList.remove("hidden");
-      $("nav-actions").classList.remove("hidden");
-      $("btn-logout").classList.remove("hidden");
-      renderDashboard(status);
-      renderAccounts(status.accounts || []);
-      await loadTokens();
-      if (!state.key) return;
-      renderCurl();
-      $("admin-key").value = "";
-      $("app-shell").focus();
-      toast("控制台已解锁");
+      await enterWorkspace(status, attempt);
+      if (attempt === sessionAttempt && state.key) toast("控制台已解锁");
     } catch (err) {
-      lock();
+      if (attempt !== sessionAttempt) return;
+      state.key = "";
       $("unlock-error").textContent = err.message;
       $("unlock-error").classList.remove("hidden");
     } finally {
       btn.disabled = false;
       btn.innerHTML = `<i data-lucide="key-round" class="w-4 h-4"></i><span>解锁控制台</span>`;
-      if (window.lucide) lucide.createIcons();
+      icons();
     }
   };
 
@@ -254,7 +304,7 @@
         a.ready &&
         !["pending", "invalid"].includes(a.activation_status),
     ).length;
-    $("stat-protocol").textContent = status.protocol_configured
+    $("protocol-state").textContent = status.protocol_configured
       ? "已配置"
       : "未配置";
     $("stat-health").textContent = "已连接";
@@ -557,8 +607,14 @@
     }
   };
 
+  window.openAddAccount = function () {
+    $("add-account").open = true;
+    $("sms-phone").focus();
+  };
+
   window.reauthAccount = function (id, label, phone) {
     cancelReauth();
+    $("add-account").open = true;
     state.reauthAccountId = id;
     $("sms-phone").value = phone || "";
     $("reauth-label").textContent = `正在重验：${label}`;
@@ -691,7 +747,7 @@
         6,
         "还没有账号",
         "在「添加账号」中使用短信登录，或手动导入凭据。",
-        () => $("sms-phone").focus(),
+        openAddAccount,
       );
       return;
     }
@@ -870,7 +926,7 @@
       tbody.replaceChildren();
       for (const t of tokens) {
         const row = document.createElement("tr");
-        cell(row, "名称", t.name || "未命名密钥", "account-name");
+        const nameCell = cell(row, "名称", t.name || "未命名密钥", "account-name token-name");
         const val = cell(row, "密钥值", "");
         const wrap = document.createElement("div");
         wrap.className = "token-value";
@@ -901,6 +957,7 @@
         const group = document.createElement("div");
         group.className = "row-actions";
         td.appendChild(group);
+        action(group, "编辑名称", () => editTokenName(t, nameCell, group));
         action(group, t.enabled ? "停用" : "启用", () =>
           toggleToken(t.id, !t.enabled),
         );
@@ -916,6 +973,66 @@
       tbody.removeAttribute("aria-busy");
     }
   };
+
+  function editTokenName(token, nameCell, group) {
+    if (nameCell.querySelector("input")) return;
+    const previous = nameCell.textContent;
+    nameCell.replaceChildren();
+    const form = document.createElement("form");
+    form.className = "token-name-editor";
+    const input = document.createElement("input");
+    input.value = token.name || "";
+    input.setAttribute("aria-label", "密钥名称");
+    input.required = true;
+    input.maxLength = 100;
+    const controls = document.createElement("div");
+    controls.className = "toolbar";
+    const error = document.createElement("p");
+    error.className = "token-name-error";
+    error.setAttribute("role", "alert");
+    const save = document.createElement("button");
+    save.type = "submit";
+    save.textContent = "保存";
+    save.className = "primary";
+    const cancel = document.createElement("button");
+    cancel.type = "button";
+    cancel.textContent = "取消";
+    cancel.addEventListener("click", () => {
+      nameCell.textContent = previous;
+      for (const btn of group.querySelectorAll("button")) btn.disabled = false;
+      group.querySelector("button")?.focus();
+    });
+    controls.append(save, cancel);
+    form.append(input, controls, error);
+    nameCell.append(form);
+    for (const btn of group.querySelectorAll("button")) btn.disabled = true;
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      if (save.disabled) return;
+      const name = input.value.trim();
+      if (!name) {
+        error.textContent = "请填写密钥名称";
+        input.focus();
+        return;
+      }
+      save.disabled = cancel.disabled = input.disabled = true;
+      error.textContent = "";
+      try {
+        await api(`/admin/api/keys/${encodeURIComponent(token.id)}`, {
+          method: "PATCH",
+          body: { name },
+        });
+        toast("密钥名称已更新，密钥值保持不变");
+        await loadTokens();
+      } catch (err) {
+        error.textContent = err.message;
+        save.disabled = cancel.disabled = input.disabled = false;
+        input.focus();
+      }
+    });
+    input.focus();
+    input.select();
+  }
 
   window.handleCreateToken = async function () {
     const name = $("new-token-name").value.trim();
@@ -1127,8 +1244,7 @@
     icons();
     renderCurl();
     if (state.key) {
-      $("admin-key").value = state.key;
-      handleUnlock();
+      resumeSession();
     }
   });
 })();
