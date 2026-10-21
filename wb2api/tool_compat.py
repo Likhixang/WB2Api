@@ -114,6 +114,9 @@ class ToolAdapter:
         pending = set()
         seen = set()
         parts = []
+        messages = [message for message in messages if not (message.role == 'assistant' and not message.content and not message.tool_calls)]
+        if not messages:
+            raise ToolProtocolError('At least one user message is required', request=True)
         for message in messages:
             role = message.role
             if role == 'tool':

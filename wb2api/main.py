@@ -19,7 +19,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from starlette.exceptions import HTTPException
 
 from .tool_compat import ToolAdapter, ToolProtocolError
-from .reasoning import ReasoningEffort, effort_hint, GATEWAY_PROMPT
+from .reasoning import ReasoningEffort, effort_hint, GATEWAY_PROMPT, neutralize_brand, neutral_text
 
 from .store import Store
 from .media import Media
@@ -139,17 +139,24 @@ class Message(Input):
     # Preserve prompt whitespace, unlike control-plane fields.
     model_config = ConfigDict(extra='forbid', str_strip_whitespace=False)
     role: str = Field(pattern='^(system|developer|user|assistant|tool)$')
-    content: str | None = Field(default=None, max_length=200000)
+    name: str | None = Field(default=None, max_length=64)
+    content: str | list[dict] | None = Field(default=None, max_length=200000)
     tool_calls: list[ToolCall] | None = Field(default=None, min_length=1, max_length=64)
     tool_call_id: str | None = Field(default=None, min_length=1, max_length=200)
 
     @model_validator(mode='after')
     def valid_shape(self):
+        if isinstance(self.content, list):
+            if len(self.content) > 256 or any(part.get('type') != 'text' or not isinstance(part.get('text'), str) or set(part) != {'type', 'text'} for part in self.content):
+                raise ValueError('Only text content parts are supported')
+            self.content = ''.join(part['text'] for part in self.content)
+            if len(self.content) > 200000:
+                raise ValueError('Message content exceeds 200000 characters')
         if self.role != 'assistant' and self.tool_calls is not None:
             raise ValueError('Only assistant messages may contain tool_calls')
         if (self.role == 'tool') != (self.tool_call_id is not None):
             raise ValueError('Tool messages require tool_call_id')
-        if self.content is None and not (self.role == 'assistant' and self.tool_calls):
+        if self.content is None and self.role != 'assistant':
             raise ValueError('Message content is required')
         return self
 
@@ -158,7 +165,6 @@ class Completion(Input):
     model: str = 'wabi'
     messages: list[Message] = Field(min_length=1, max_length=200)
     stream: bool = False
-    user: str | None = Field(default=None, max_length=200)
     tools: list[dict] | None = Field(default=None, max_length=64)
     tool_choice: str | dict | None = None
     parallel_tool_calls: bool = True
@@ -173,7 +179,26 @@ class Completion(Input):
     seed: int | None = None
     user: str | None = Field(default=None, max_length=256)
     stream_options: dict | None = None
+    stop: str | list[str] | None = None
+    response_format: dict | None = None
+    reasoning: dict | None = None
+    store: bool | None = None
+    metadata: dict[str, str] | None = None
     n: int = Field(default=1, ge=1, le=1)
+
+    @model_validator(mode='after')
+    def client_shapes(self):
+        if self.reasoning is not None:
+            if set(self.reasoning) - {'effort'} or self.reasoning.get('effort') not in ('none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'):
+                raise ValueError('reasoning supports only a valid effort')
+            if self.reasoning_effort is not None and self.reasoning_effort != self.reasoning['effort']:
+                raise ValueError('Conflicting reasoning effort fields')
+            self.reasoning_effort = self.reasoning['effort']
+        if self.response_format is not None and self.response_format != {'type': 'text'}:
+            raise ValueError('Only text response_format is currently supported')
+        if self.stream_options is not None and (set(self.stream_options) - {'include_usage'} or ('include_usage' in self.stream_options and type(self.stream_options['include_usage']) is not bool)):
+            raise ValueError('stream_options supports only boolean include_usage')
+        return self
 
 
 class ImageGeneration(Input):
@@ -643,7 +668,7 @@ def create_app(overrides: dict | None = None) -> FastAPI:
         adapter = ToolAdapter(body.tools, body.tool_choice, body.parallel_tool_calls)
         prompt = GATEWAY_PROMPT + effort_hint(body.reasoning_effort) + adapter.history_prompt(body.messages)
         reasoning_headers = {'X-WB2Api-Reasoning-Mode': 'prompt', 'X-WB2Api-Reasoning-Effort': body.reasoning_effort} if body.reasoning_effort is not None else {}
-        ignored = sorted(field for field in ('temperature', 'top_p', 'max_tokens', 'max_completion_tokens', 'frequency_penalty', 'presence_penalty', 'seed', 'stream_options') if getattr(body, field) is not None)
+        ignored = sorted(field for field in ('temperature', 'top_p', 'max_tokens', 'max_completion_tokens', 'frequency_penalty', 'presence_penalty', 'seed', 'stream_options', 'stop', 'store', 'metadata') if getattr(body, field) is not None)
         if ignored:
             reasoning_headers['X-WB2Api-Ignored-Parameters'] = ','.join(ignored)
         tool_mode = bool(body.tools) or body.tool_choice is not None or any(
@@ -661,6 +686,8 @@ def create_app(overrides: dict | None = None) -> FastAPI:
         account = accounts[app.state.counter % len(accounts)]
         app.state.counter += 1
         iterator = app.state.wabi.stream_chat(account['id'], prompt, protocol)
+        if not tool_mode:
+            iterator = neutral_text(iterator)
         completion_id = 'chatcmpl-' + uuid.uuid4().hex
         created = int(time.time())
 
@@ -676,6 +703,8 @@ def create_app(overrides: dict | None = None) -> FastAPI:
             if not content:
                 return error('Upstream completed without text', 502, 'empty_response')
             message, finish = adapter.parse(content) if tool_mode else ({'role': 'assistant', 'content': content}, 'stop')
+            if tool_mode and message.get('content'):
+                message['content'] = neutralize_brand(message['content'])
             if not body.stream:
                 return JSONResponse({'id': completion_id, 'object': 'chat.completion', 'created': created, 'model': 'wabi',
                         'choices': [{'index': 0, 'message': message, 'finish_reason': finish}]}, headers=reasoning_headers)

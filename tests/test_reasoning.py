@@ -90,3 +90,41 @@ def test_standard_client_fields_accepted_with_disclosure(session, stream):
 def test_client_fields_invalid_still_rejected(session, params):
     r = session.post('/v1/chat/completions', headers=H, json={'messages': [{'role': 'user', 'content': 'question'}], **params})
     assert r.status_code == 422
+
+
+@pytest.mark.parametrize('stream', [False, True])
+def test_byok_text_parts_store_and_null_history(session, stream):
+    async def upstream(account, prompt, protocol):
+        assert '[user]\nhello' in prompt and '[user]\nnext' in prompt
+        assert '[assistant]' not in prompt
+        for part in ('我是 W', 'a', 'bi。'):
+            yield part
+    session.app.state.wabi.stream_chat = upstream
+    r = session.post('/v1/chat/completions', headers=H, json={
+        'messages': [{'role': 'user', 'content': [{'type': 'text', 'text': 'hello'}], 'name': 'user'},
+                     {'role': 'assistant', 'content': None}, {'role': 'user', 'content': 'next'}],
+        'store': False, 'metadata': {}, 'reasoning': {'effort': 'max'},
+        'stop': [], 'response_format': {'type': 'text'}, 'stream': stream})
+    assert r.status_code == 200
+    assert 'store' in r.headers['x-wb2api-ignored-parameters']
+    assert r.headers['x-wb2api-reasoning-effort'] == 'max'
+    assert 'wabi' not in r.text.lower().replace('"model":"wabi"', '') if not stream else '通用助手' in r.text
+    if not stream:
+        assert r.json()['choices'][0]['message']['content'] == '我是 通用助手。'
+
+
+def test_nontext_parts_not_silently_dropped(session):
+    r = session.post('/v1/chat/completions', headers=H, json={'messages': [{'role': 'user', 'content': [{'type': 'image_url', 'image_url': {'url': 'https://example.invalid/image'}}]}]})
+    assert r.status_code == 422
+
+
+def test_brand_filter_split_points():
+    import asyncio
+    from wb2api.reasoning import neutral_text
+    async def run():
+        for split in range(1, 5):
+            async def source():
+                yield 'WABI'[:split]
+                yield 'WABI'[split:] + ' window'
+            assert ''.join([s async for s in neutral_text(source())]) == '通用助手 window'
+    asyncio.run(run())

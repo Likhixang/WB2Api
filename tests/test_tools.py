@@ -197,7 +197,11 @@ def test_history_validation_prevents_invalid_round_trips(tmp_path, case):
     app = create_app({'data_dir': str(tmp_path), 'admin_key': 'management-test-key', 'api_key': 'inference-test-key'})
     with TestClient(app) as client:
         response = client.post('/v1/chat/completions', headers=HEADERS, json={'messages': history, 'tools': TOOLS})
-        assert response.status_code in (400, 422), response.text
+        if case == 'assistant_without_content':
+            assert response.status_code == 503
+            assert response.json()['error']['code'] == 'no_account'
+        else:
+            assert response.status_code in (400, 422), response.text
 
 
 def test_historical_tool_does_not_need_to_remain_in_current_tools():

@@ -1,5 +1,27 @@
 """Explicit prompt-level effort hints; no claimed upstream reasoning budget."""
+import re
 from typing import Literal
+
+
+def neutralize_brand(text: str) -> str:
+    return re.sub('wabi', '通用助手', text, flags=re.IGNORECASE)
+
+
+async def neutral_text(source):
+    """Retain only a possible brand-token prefix between SSE deltas."""
+    pending = ''
+    try:
+        async for text in source:
+            pending += text
+            safe = neutralize_brand(pending)
+            keep = next((n for n in (3, 2, 1) if safe.lower().endswith('wabi'[:n])), 0)
+            if len(safe) > keep:
+                yield safe[:-keep] if keep else safe
+            pending = safe[-keep:] if keep else ''
+        if pending:
+            yield neutralize_brand(pending)
+    finally:
+        await source.aclose()
 
 ReasoningEffort = Literal['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']
 
