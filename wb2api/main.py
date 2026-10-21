@@ -683,7 +683,7 @@ def create_app(overrides: dict | None = None) -> FastAPI:
         tool_mode = bool(body.tools) or body.tool_choice is not None or any(
             message.role == 'tool' or message.tool_calls for message in body.messages)
         if tool_mode:
-            prompt = adapter.instruction() + prompt
+            prompt = adapter.instruction() + '<client_transcript>\n' + prompt + '\n</client_transcript>\nProduce the next external client response now. For an action, output the RPC envelope, not a promise.'
         if len(prompt) > 200000:
             return error('Combined prompt exceeds 200000 characters', 413, 'body_too_large')
         protocol = json.loads(app.state.store.get_setting('protocol', json.dumps(DEFAULT_PROTOCOL)))
