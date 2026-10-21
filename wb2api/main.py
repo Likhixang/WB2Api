@@ -147,8 +147,8 @@ def create_app(overrides: dict | None = None) -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(app):
-        if min(len(config['admin_key']), len(config['api_key'])) < 24:
-            raise RuntimeError('WB2API_ADMIN_KEY and WB2API_API_KEY must each be at least 24 characters')
+        if min(len(config['admin_key']), len(config['api_key'])) < 8:
+            raise RuntimeError('WB2API_ADMIN_KEY and WB2API_API_KEY must each be at least 8 characters')
         if hmac.compare_digest(config['admin_key'], config['api_key']):
             raise RuntimeError('Management and inference keys must differ')
         app.state.store = Store(config['data_dir'], config['encryption_key'])
