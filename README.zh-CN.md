@@ -21,7 +21,7 @@
 | `wabi-image` | 图片生成 | 可用 |
 | `wabi-video` | 视频生成 | 暂未启用，尚未验证生成链路 |
 
-以上名称按能力区分，不代表可选择底层基座模型。Function Calling 通过提示词兼容，由客户端执行返回的工具调用。可传 `reasoning_effort`（`none`、`minimal`、`low`、`medium`、`high`、`xhigh`），通过提示词引导思考强度，不代表底层 Token 预算。
+以上名称按能力区分，不代表可选择底层基座模型。Function Calling 通过提示词兼容，由客户端执行返回的工具调用。可传 `reasoning_effort`（`none`、`minimal`、`low`、`medium`、`high`、`xhigh`、`max`），通过提示词引导思考强度，不代表底层 Token 预算。常见采样和长度参数为兼容客户端而接收，但不在上游生效；响应头 `X-WB2Api-Ignored-Parameters` 会列出。
 
 ## 快速部署
 

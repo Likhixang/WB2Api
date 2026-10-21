@@ -2,7 +2,7 @@ import json
 import pytest
 from fastapi.testclient import TestClient
 from wb2api.main import create_app
-from wb2api.reasoning import effort_hint
+from wb2api.reasoning import effort_hint, GATEWAY_PROMPT
 
 H = {'Authorization': 'Bearer effort-client'}
 
@@ -15,7 +15,7 @@ def session(tmp_path):
         yield c
 
 
-@pytest.mark.parametrize('effort', ['none', 'minimal', 'low', 'medium', 'high', 'xhigh'])
+@pytest.mark.parametrize('effort', ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'])
 @pytest.mark.parametrize('stream', [False, True])
 def test_effort_explicit_prompt_and_header(session, effort, stream):
     observed = []
@@ -27,7 +27,7 @@ def test_effort_explicit_prompt_and_header(session, effort, stream):
     assert r.status_code == 200
     assert r.headers['x-wb2api-reasoning-mode'] == 'prompt'
     assert r.headers['x-wb2api-reasoning-effort'] == effort
-    assert observed == [effort_hint(effort) + 'question']
+    assert observed == [GATEWAY_PROMPT + effort_hint(effort) + 'question']
     assert 'not private internal deliberations' in observed[0]
     assert '[DONE]' in r.text if stream else r.json()['choices'][0]['message']['content'] == 'answer'
 
@@ -39,7 +39,7 @@ def test_omitted_effort_leaves_prompt_unchanged(session):
         yield 'answer'
     session.app.state.wabi.stream_chat = upstream
     r = session.post('/v1/chat/completions', headers=H, json={'messages': [{'role': 'user', 'content': 'plain'}]})
-    assert r.status_code == 200 and seen == ['plain']
+    assert r.status_code == 200 and seen == [GATEWAY_PROMPT + 'plain']
     assert 'x-wb2api-reasoning-mode' not in r.headers
 
 
@@ -64,3 +64,29 @@ def test_effort_with_tool_format_still_strict(session):
 def test_image_effort_not_silently_ignored(session):
     r = session.post('/v1/chat/completions', headers=H, json={'model': 'wabi-image', 'messages': [{'role': 'user', 'content': 'draw'}], 'reasoning_effort': 'high'})
     assert r.status_code == 400 and r.json()['error']['code'] == 'unsupported_media_reasoning'
+
+
+@pytest.mark.parametrize('stream', [False, True])
+def test_standard_client_fields_accepted_with_disclosure(session, stream):
+    async def upstream(account, prompt, protocol):
+        assert GATEWAY_PROMPT in prompt
+        yield 'compatible'
+    session.app.state.wabi.stream_chat = upstream
+    payload = {'messages': [{'role': 'user', 'content': 'question'}], 'stream': stream,
+               'reasoning_effort': 'max', 'temperature': 0.7, 'top_p': 1,
+               'max_tokens': 1024, 'max_completion_tokens': 1024, 'n': 1,
+               'frequency_penalty': 0, 'presence_penalty': 0, 'seed': 12,
+               'user': 'test-client', 'stream_options': {'include_usage': True}}
+    r = session.post('/v1/chat/completions', headers=H, json=payload)
+    assert r.status_code == 200
+    assert r.headers['x-wb2api-reasoning-effort'] == 'max'
+    assert set(r.headers['x-wb2api-ignored-parameters'].split(',')) == {
+        'temperature', 'top_p', 'max_tokens', 'max_completion_tokens',
+        'frequency_penalty', 'presence_penalty', 'seed', 'stream_options'}
+    assert 'compatible' in r.text and 'reasoning_content' not in r.text
+
+
+@pytest.mark.parametrize('params', [{'temperature': 3}, {'top_p': -1}, {'max_tokens': 0}, {'n': 2}])
+def test_client_fields_invalid_still_rejected(session, params):
+    r = session.post('/v1/chat/completions', headers=H, json={'messages': [{'role': 'user', 'content': 'question'}], **params})
+    assert r.status_code == 422

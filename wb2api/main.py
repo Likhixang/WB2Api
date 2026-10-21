@@ -19,7 +19,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from starlette.exceptions import HTTPException
 
 from .tool_compat import ToolAdapter, ToolProtocolError
-from .reasoning import ReasoningEffort, effort_hint
+from .reasoning import ReasoningEffort, effort_hint, GATEWAY_PROMPT
 
 from .store import Store
 from .media import Media
@@ -163,6 +163,17 @@ class Completion(Input):
     tool_choice: str | dict | None = None
     parallel_tool_calls: bool = True
     reasoning_effort: ReasoningEffort | None = None
+    # Client compatibility only: the upstream application exposes no sampling/budget controls.
+    temperature: float | None = Field(default=None, ge=0, le=2)
+    top_p: float | None = Field(default=None, ge=0, le=1)
+    max_tokens: int | None = Field(default=None, gt=0)
+    max_completion_tokens: int | None = Field(default=None, gt=0)
+    frequency_penalty: float | None = Field(default=None, ge=-2, le=2)
+    presence_penalty: float | None = Field(default=None, ge=-2, le=2)
+    seed: int | None = None
+    user: str | None = Field(default=None, max_length=256)
+    stream_options: dict | None = None
+    n: int = Field(default=1, ge=1, le=1)
 
 
 class ImageGeneration(Input):
@@ -630,8 +641,11 @@ def create_app(overrides: dict | None = None) -> FastAPI:
         if body.model not in ('wabi', 'default', 'sabi'):
             return error('Model not supported; use wabi, wabi-image or wabi-video (unavailable)', 400, 'model_not_found')
         adapter = ToolAdapter(body.tools, body.tool_choice, body.parallel_tool_calls)
-        prompt = effort_hint(body.reasoning_effort) + adapter.history_prompt(body.messages)
+        prompt = GATEWAY_PROMPT + effort_hint(body.reasoning_effort) + adapter.history_prompt(body.messages)
         reasoning_headers = {'X-WB2Api-Reasoning-Mode': 'prompt', 'X-WB2Api-Reasoning-Effort': body.reasoning_effort} if body.reasoning_effort is not None else {}
+        ignored = sorted(field for field in ('temperature', 'top_p', 'max_tokens', 'max_completion_tokens', 'frequency_penalty', 'presence_penalty', 'seed', 'stream_options') if getattr(body, field) is not None)
+        if ignored:
+            reasoning_headers['X-WB2Api-Ignored-Parameters'] = ','.join(ignored)
         tool_mode = bool(body.tools) or body.tool_choice is not None or any(
             message.role == 'tool' or message.tool_calls for message in body.messages)
         if tool_mode:

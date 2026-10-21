@@ -90,7 +90,7 @@ def test_openai_output_conversion_with_explicit_fixture(client, stream):
                json={'delta_events': ['fixture_delta'], 'done_events': ['fixture_done']})
 
     async def fixture_stream(account_id, prompt, protocol):
-        assert prompt == 'hello'
+        assert prompt.endswith('hello') and '[Gateway response policy]' in prompt
         yield 'Hello '
         yield 'world'
 
@@ -112,7 +112,7 @@ def test_openai_output_conversion_with_explicit_fixture(client, stream):
 
 def test_unsupported_parameters_are_not_silently_ignored(client):
     response = client.post('/v1/chat/completions', headers=IH, json={
-        'messages': [{'role': 'user', 'content': 'hello'}], 'temperature': 0.5,
+        'messages': [{'role': 'user', 'content': 'hello'}], 'unknown_client_field': 0.5,
     })
     assert response.status_code == 422
 
