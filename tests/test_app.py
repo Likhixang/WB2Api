@@ -117,3 +117,10 @@ def test_store_persists_and_reuses_device_id(tmp_path):
     reopened = Store(str(tmp_path))
     assert reopened.get_account(account['id'])['device_id'] == device
     reopened.close()
+
+
+def test_google_verify_session_handling(client):
+    response = client.post('/admin/api/auth/google-verify', headers=AH, json={
+        'phone_number': '+8613800000000', 'code': 'test-code', 'state': 'test-state'
+    })
+    assert response.status_code == 400

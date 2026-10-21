@@ -26,6 +26,7 @@ DEFAULT_PROTOCOL = {
     'event_type_path': 'type', 'turn_id_path': 'turn_id', 'thread_id_path': 'thread_id',
     'text_path': 'delta.text', 'delta_events': [], 'done_events': [], 'error_events': [], 'mode': 'delta',
 }
+DEFAULT_FIREBASE_API_KEY = 'AIzaSyBqAGBGJrs9ut-Mc1k8f6x8tdD_e-ZDIDI'
 STATIC = Path(__file__).parent / 'static'
 
 
@@ -66,8 +67,16 @@ class Phone(Input):
 
 class CheckCode(Phone):
     code: str = Field(min_length=4, max_length=12)
-    firebase_api_key: str = Field(min_length=1, max_length=1024)
-    label: str = Field(min_length=1, max_length=100)
+    firebase_api_key: str = Field(default='', max_length=1024)
+    label: str = Field(default='Phone Account', max_length=100)
+
+
+class GoogleVerify(Input):
+    phone_number: str = Field(default='', max_length=50)
+    state: str = Field(default='', max_length=1000)
+    code: str = Field(min_length=1, max_length=5000)
+    firebase_api_key: str = Field(default='', max_length=1024)
+    label: str = Field(default='', max_length=100)
 
 
 class Message(Input):
@@ -210,9 +219,10 @@ def create_app(overrides: dict | None = None) -> FastAPI:
     async def add_account(body: AccountInput):
         if not body.refresh_token and not body.id_token:
             raise HTTPException(422, 'Provide a refresh token or ID token')
-        if body.refresh_token and not body.firebase_api_key:
-            raise HTTPException(422, 'Firebase API key is required for refresh tokens')
-        return app.state.store.add_account(**body.model_dump(), expires_at=jwt_exp(body.id_token))
+        firebase_key = body.firebase_api_key or DEFAULT_FIREBASE_API_KEY
+        payload = body.model_dump()
+        payload['firebase_api_key'] = firebase_key
+        return app.state.store.add_account(**payload, expires_at=jwt_exp(body.id_token))
 
     @app.patch('/admin/api/accounts/{account_id}', dependencies=[Depends(admin)])
     async def toggle(account_id: str, body: Toggle):
@@ -249,18 +259,66 @@ def create_app(overrides: dict | None = None) -> FastAPI:
                 raise HTTPException(429, 'Too many verification attempts; request a new code')
             pending['attempts'] += 1
             result = await app.state.wabi.check_code(body.phone_number, body.code, pending['verifier'])
-            if result.get('google_required') or result.get('mailbox_code_required'):
+            if result.get('google_required'):
+                pending['google_state'] = result.get('google_state', '')
+                pending['label'] = body.label
+                pending['firebase_api_key'] = body.firebase_api_key
+                return {
+                    'ok': True,
+                    'requires_google': True,
+                    'google_url': result.get('google_url', ''),
+                    'google_state': result.get('google_state', ''),
+                    'phone_number': body.phone_number,
+                    'label': body.label,
+                }
+            if result.get('mailbox_code_required'):
                 return {'ok': False, 'requires_verification': True, 'details': {
-                    'google_required': bool(result.get('google_required')),
-                    'mailbox_code_required': bool(result.get('mailbox_code_required')),
-                    'message': 'Complete the additional verification in the official app, then import your own refresh token',
+                    'mailbox_code_required': True,
+                    'message': 'Mailbox verification required',
                 }}
             token = result.get('firebase_custom_token')
             if not token:
                 raise UpstreamError('Upstream returned no custom token')
-            tokens = await app.state.wabi.exchange_custom(token, body.firebase_api_key)
-            account = app.state.store.add_account(label=body.label, firebase_api_key=body.firebase_api_key, **tokens)
+            firebase_key = body.firebase_api_key or DEFAULT_FIREBASE_API_KEY
+            tokens = await app.state.wabi.exchange_custom(token, firebase_key)
+            account = app.state.store.add_account(label=body.label, firebase_api_key=firebase_key, **tokens)
             app.state.logins.pop(body.phone_number, None)
+            return {'ok': True, 'account': account}
+
+    @app.post('/admin/api/auth/google-verify', dependencies=[Depends(admin)])
+    async def google_verify(body: GoogleVerify):
+        async with app.state.login_lock:
+            pending = None
+            if body.phone_number:
+                pending = app.state.logins.get(body.phone_number)
+            if not pending and body.state:
+                for v in app.state.logins.values():
+                    if v.get('google_state') == body.state:
+                        pending = v
+                        break
+            if not pending or pending['expires'] < time.time():
+                raise HTTPException(400, 'Verification session expired; please request SMS code again')
+            raw_code = body.code.strip()
+            state = body.state.strip() or pending.get('google_state', '')
+            code = raw_code
+            if 'code=' in raw_code or 'state=' in raw_code:
+                from urllib.parse import urlparse, parse_qs
+                parsed = urlparse(raw_code if '://' in raw_code else 'http://localhost/' + raw_code.lstrip('/?'))
+                qs = parse_qs(parsed.query or parsed.fragment)
+                if 'code' in qs:
+                    code = qs['code'][0]
+                if 'state' in qs and not state:
+                    state = qs['state'][0]
+            result = await app.state.wabi.google_verify(state, code, pending['verifier'])
+            token = result.get('firebase_custom_token')
+            if not token:
+                raise UpstreamError('Google verification did not return a session token')
+            firebase_key = body.firebase_api_key or pending.get('firebase_api_key') or DEFAULT_FIREBASE_API_KEY
+            tokens = await app.state.wabi.exchange_custom(token, firebase_key)
+            label = body.label or pending.get('label') or 'Google Phone Account'
+            account = app.state.store.add_account(label=label, firebase_api_key=firebase_key, **tokens)
+            if body.phone_number:
+                app.state.logins.pop(body.phone_number, None)
             return {'ok': True, 'account': account}
 
     @app.get('/v1/models', dependencies=[Depends(inference)])

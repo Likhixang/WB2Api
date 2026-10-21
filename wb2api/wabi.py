@@ -177,6 +177,15 @@ class Wabi:
             json={"phone_number": phone, "code": code, "code_challenge": challenge},
         )
 
+    async def google_verify(self, state: str, code: str, verifier: str) -> dict[str, Any]:
+        if not isinstance(verifier, str) or not verifier:
+            raise UpstreamError("A PKCE verifier is required", 400, "invalid_verifier")
+        return await self._json(
+            "POST", self.base_url + "/api/v1/auth/phone/google-verify",
+            headers=self._headers(),
+            json={"state": state, "code": code, "code_verifier": verifier},
+        )
+
     @staticmethod
     def _tokens(data: dict[str, Any], *, refresh: bool = False) -> dict[str, Any]:
         token_key = "id_token" if refresh else "idToken"

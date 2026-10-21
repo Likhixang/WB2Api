@@ -112,7 +112,9 @@
     $('sms-form').reset();
     $('challenge-notice').hidden = true;
     $('challenge-notice').textContent = '';
-    for (const id of ['import-message', 'send-code-message', 'sms-message', 'protocol-message']) message(id, '');
+    $('google-flow').hidden = true;
+    $('google-redirect-url').value = '';
+    for (const id of ['import-message', 'send-code-message', 'sms-message', 'google-verify-message', 'protocol-message']) message(id, '');
   }
   function lock(reason = '') {
     state.epoch += 1;
@@ -385,9 +387,20 @@
       try {
         const data = await request('/admin/api/auth/check-code', { method: 'POST', body });
         $('sms-code').value = '';
+        if (data?.requires_google === true) {
+          state.pendingGoogle = {
+            phoneNumber: data.phone_number,
+            state: data.google_state,
+            label: data.label,
+            firebaseApiKey: body.firebase_api_key
+          };
+          $('google-url-link').href = data.google_url;
+          $('google-flow').hidden = false;
+          message('sms-message', '已触发 Google 二次验证，请按下方指引完成授权。');
+          return;
+        }
         if (data?.ok === false && data.requires_verification === true) {
           const challenges = [];
-          if (data.details?.google_required === true) challenges.push('Google 验证');
           if (data.details?.mailbox_code_required === true) challenges.push('邮箱验证码');
           // Deliberately allowlist boolean flags only; never print raw details or account tokens.
           $('challenge-notice').textContent = `上游要求进一步验证${challenges.length ? `：${challenges.join('、')}` : '（未提供可展示的验证类型）'}。当前页面不支持完成此验证，请通过上游官方流程处理后再导入凭据。未确认账户导入成功。`;
@@ -397,11 +410,44 @@
         }
         if (data?.ok !== true) throw new RequestError('短信验证未通过，服务未确认导入成功。');
         form.reset();
+        $('google-flow').hidden = true;
         message('sms-message', '短信验证成功，正在重新读取账户状态。');
         toast('验证并导入请求成功，账户信息以列表为准。');
         await syncStatus();
       } catch (error) { report(error, 'sms-message'); }
       finally { body.code = ''; body.firebase_api_key = ''; }
+    }, '验证中…');
+  });
+
+  $('google-verify-button').addEventListener('click', () => {
+    const rawCode = ($('google-redirect-url').value || '').trim();
+    if (!rawCode) {
+      message('google-verify-message', '请粘贴跳转后的网址或授权 Code。', true);
+      return;
+    }
+    const info = state.pendingGoogle || {};
+    busy($('google-verify-button'), async () => {
+      message('google-verify-message', '正在提交 Google 验证…');
+      try {
+        const body = {
+          phone_number: info.phoneNumber || '',
+          state: info.state || '',
+          code: rawCode,
+          label: info.label || '',
+          firebase_api_key: info.firebaseApiKey || ''
+        };
+        const data = await request('/admin/api/auth/google-verify', { method: 'POST', body });
+        if (data?.ok !== true) throw new RequestError('Google 验证未通过，请检查 Code 是否有效。');
+        $('sms-form').reset();
+        $('google-flow').hidden = true;
+        $('google-redirect-url').value = '';
+        state.pendingGoogle = null;
+        message('sms-message', 'Google 验证通过，已成功导入账户！');
+        toast('账户登录成功并已存入列表！');
+        await syncStatus();
+      } catch (error) {
+        report(error, 'google-verify-message');
+      }
     }, '验证中…');
   });
 
