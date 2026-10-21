@@ -230,6 +230,8 @@ class ProtocolMapper:
             # Untrusted upstream payloads may contain secrets or user text.
             raise ProtocolError("Wabi reported an error for this turn", "upstream_turn_error")
         if kind in self.events["done_events"]:
+            if extract_path(payload, "message.status") in ("failed", "error", "cancelled"):
+                raise ProtocolError("Upstream message did not complete successfully", "upstream_turn_error")
             blocks = extract_path(payload, "message.blocks")
             final_text = ""
             if isinstance(blocks, list):

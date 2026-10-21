@@ -1088,9 +1088,20 @@
   };
 
   // --- Protocol Modal ---
-  window.openProtocolModal = function () {
+  window.openProtocolModal = async function () {
     openModal("protocol-modal");
-    loadProtocolTemplate();
+    $("protocol-json").value = "";
+    $("protocol-json").disabled = true;
+    $("btn-save-protocol").disabled = true;
+    try {
+      const mapping = await api("/admin/api/protocol");
+      $("protocol-json").value = JSON.stringify(mapping, null, 2);
+      $("btn-save-protocol").disabled = false;
+    } catch (err) {
+      toast(`读取当前映射失败：${err.message}`, true);
+    } finally {
+      $("protocol-json").disabled = false;
+    }
   };
 
   window.closeProtocolModal = function () {
@@ -1098,15 +1109,16 @@
   };
 
   window.loadProtocolTemplate = function () {
+    $("btn-save-protocol").disabled = false;
     $("protocol-json").value = JSON.stringify(
       {
         event_type_path: "type",
         turn_id_path: "turn_id",
         thread_id_path: "thread_id",
         text_path: "delta.text",
-        delta_events: ["turn.delta", "message_delta"],
-        done_events: ["turn.done", "message_done"],
-        error_events: ["turn.error", "error"],
+        delta_events: ["message_delta"],
+        done_events: ["message_finished"],
+        error_events: ["turn_error", "message_error"],
         mode: "delta",
       },
       null,
