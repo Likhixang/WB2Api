@@ -22,6 +22,7 @@ from starlette.exceptions import HTTPException
 from .tool_compat import ToolAdapter, ToolProtocolError
 from .reasoning import ReasoningEffort, effort_hint, GATEWAY_PROMPT, neutralize_brand, neutral_text
 
+from .budgets import BudgetError, OutputBudget, check_input, REQUEST_BYTES
 from .cors import InferenceCORSMiddleware
 from .observability import RequestLogMiddleware
 from .streaming import with_heartbeats
@@ -131,7 +132,7 @@ class ApiKeyUpdate(Input):
 class CallFunction(Input):
     model_config = ConfigDict(extra='forbid', str_strip_whitespace=False)
     name: str = Field(pattern=r'^[A-Za-z0-9_-]{1,64}$')
-    arguments: str = Field(max_length=200000)
+    arguments: str
 
 
 class ToolCall(Input):
@@ -146,7 +147,7 @@ class Message(Input):
     model_config = ConfigDict(extra='allow', str_strip_whitespace=False)
     role: str = Field(pattern='^(system|developer|user|assistant|tool)$')
     name: str | None = Field(default=None, max_length=64)
-    content: str | list[dict] | None = Field(default=None, max_length=200000)
+    content: str | list[dict] | None = None
     tool_calls: list[ToolCall] | None = Field(default=None, max_length=128)
     tool_call_id: str | None = Field(default=None, min_length=1, max_length=200)
 
@@ -169,8 +170,7 @@ class Message(Input):
             if len(self.content) > 256 or any(part.get('type') != 'text' or not isinstance(part.get('text'), str) or set(part) != {'type', 'text'} for part in self.content):
                 raise ValueError('Only text content parts are supported')
             self.content = ''.join(part['text'] for part in self.content)
-            if len(self.content) > 200000:
-                raise ValueError('Message content exceeds 200000 characters')
+
         if self.role != 'assistant' and self.tool_calls is not None:
             raise ValueError('Only assistant messages may contain tool_calls')
         if (self.role == 'tool') != (self.tool_call_id is not None):
@@ -183,17 +183,17 @@ class Message(Input):
 class Completion(Input):
     model_config = ConfigDict(extra='allow', str_strip_whitespace=False)
     model: str = 'wabi'
-    messages: list[Message] = Field(min_length=1, max_length=200)
+    messages: list[Message] = Field(min_length=1)
     stream: bool = False
     tools: list[dict] | None = Field(default=None, max_length=128)
     tool_choice: str | dict | None = None
     parallel_tool_calls: bool | None = True
     reasoning_effort: ReasoningEffort | None = None
-    # Client compatibility only: the upstream application exposes no sampling/budget controls.
+    # Sampling is ignored upstream; output lengths are enforced by a local estimated budget.
     temperature: float | None = Field(default=None, ge=0, le=2)
     top_p: float | None = Field(default=None, ge=0, le=1)
-    max_tokens: int | None = Field(default=None, gt=0)
-    max_completion_tokens: int | None = Field(default=None, gt=0)
+    max_tokens: int | None = Field(default=None, gt=0, le=128000)
+    max_completion_tokens: int | None = Field(default=None, gt=0, le=128000)
     frequency_penalty: float | None = Field(default=None, ge=-2, le=2)
     presence_penalty: float | None = Field(default=None, ge=-2, le=2)
     seed: int | None = None
@@ -228,7 +228,7 @@ class Completion(Input):
         def safe_name(value):
             return value if len(value) <= 80 and value.isascii() and all(c.isalnum() or c in '_-.' for c in value) else 'unknown'
         ignored = {safe_name(key) for key in (self.model_extra or {})}
-        ignored.update(key for key in ('temperature', 'top_p', 'max_tokens', 'max_completion_tokens',
+        ignored.update(key for key in ('temperature', 'top_p',
             'frequency_penalty', 'presence_penalty', 'seed', 'stream_options', 'stop', 'store', 'metadata', 'user')
             if getattr(self, key) is not None)
         for message in self.messages:
@@ -268,6 +268,7 @@ def create_app(overrides: dict | None = None) -> FastAPI:
         'log_max_bytes': int(os.getenv('WB2API_LOG_MAX_BYTES', '20971520')),
         'log_backups': int(os.getenv('WB2API_LOG_BACKUPS', '3')),
         'video_timeout': float(os.getenv('WABI_VIDEO_TIMEOUT', '900')),
+        'delete_completed_threads': os.getenv('WB2API_DELETE_COMPLETED_THREADS', 'true').lower() in ('true', '1', 'yes'),
         'timezone': os.getenv('WABI_TIME_ZONE', 'Asia/Shanghai'),
         'app_version': '2.0.2', 'app_build': '1010',
     }
@@ -298,8 +299,9 @@ def create_app(overrides: dict | None = None) -> FastAPI:
         # Reject oversized/chunked JSON bodies before parsing; Starlette otherwise buffers them.
         if request.method in {'POST', 'PUT', 'PATCH'}:
             length = request.headers.get('content-length', '')
-            if not length.isdigit() or int(length) > 1048576:
-                return error('JSON requests require Content-Length <= 1 MiB', 413, 'body_too_large')
+            limit = REQUEST_BYTES if request.url.path.startswith('/v1/') else 1048576
+            if not length.isdigit() or int(length) > limit:
+                return error('JSON requests require Content-Length <= ' + str(limit) + ' bytes', 413, 'body_too_large')
         response = await call_next(request)
         response.headers['X-Content-Type-Options'] = 'nosniff'
         response.headers['Referrer-Policy'] = 'no-referrer'
@@ -698,7 +700,10 @@ def create_app(overrides: dict | None = None) -> FastAPI:
             'object': 'list',
             'data': [
                 {'id': 'gpt-6.1-sol', 'object': 'model', 'created': 0, 'owned_by': 'wb2api',
-                 'capability': 'chat', 'capability_alias': True, 'available': True},
+                 'capability': 'chat', 'capability_alias': True, 'available': True,
+                 'gateway_budget': {'context_tokens': 1050000, 'max_input_tokens': 922000,
+                    'max_output_tokens': 128000, 'count_mode': 'estimated-o200k_base',
+                    'upstream_limits_verified': False}},
                 {'id': 'gpt-image-2.5-flare', 'object': 'model', 'created': 0, 'owned_by': 'wb2api',
                  'capability': 'image', 'capability_alias': True, 'available': True},
                 {'id': 'wan-2.1', 'object': 'model', 'created': 0, 'owned_by': 'wb2api',
@@ -786,8 +791,14 @@ def create_app(overrides: dict | None = None) -> FastAPI:
             message.role == 'tool' or message.tool_calls for message in body.messages)
         if tool_mode:
             prompt = adapter.instruction() + '<client_transcript>\n' + prompt + '\n</client_transcript>\nProduce the next external client response now. For an action, output the RPC envelope, not a promise.'
-        if len(prompt) > 200000:
-            return error('Combined prompt exceeds 200000 characters', 413, 'body_too_large')
+        requested_output = body.max_completion_tokens if body.max_completion_tokens is not None else body.max_tokens
+        try:
+            _, output_limit = check_input(prompt, requested_output)
+        except BudgetError as exc:
+            return error(str(exc), exc.status, exc.code)
+        reasoning_headers.update({'X-WB2Api-Token-Count-Mode': 'estimated-o200k_base',
+            'X-WB2Api-Context-Tokens': '1050000', 'X-WB2Api-Max-Input-Tokens': '922000',
+            'X-WB2Api-Max-Output-Tokens': '128000', 'X-WB2Api-Output-Budget': str(output_limit)})
         protocol = json.loads(app.state.store.get_setting('protocol', json.dumps(DEFAULT_PROTOCOL)))
         if not configured(protocol):
             return error('Configure the verified Wabi SSE event mapping in the management console first', 501, 'protocol_not_configured')
@@ -799,6 +810,8 @@ def create_app(overrides: dict | None = None) -> FastAPI:
         iterator = app.state.wabi.stream_chat(account['id'], prompt, protocol)
         if not tool_mode:
             iterator = neutral_text(iterator)
+        output_budget = OutputBudget(output_limit)
+        iterator = output_budget.stream(iterator)
         completion_id = 'chatcmpl-' + uuid.uuid4().hex
         created = int(time.time())
 
@@ -808,9 +821,11 @@ def create_app(overrides: dict | None = None) -> FastAPI:
 
         async def collect_message():
             content = ''.join([text async for text in iterator])
-            if not content:
+            if not content and not output_budget.truncated:
                 raise UpstreamError('Upstream completed without text', 502, 'empty_response')
-            message, finish = adapter.parse(content) if tool_mode else ({'role': 'assistant', 'content': content}, 'stop')
+            if tool_mode and output_budget.truncated:
+                raise UpstreamError('Output exceeded the estimated token budget; no tool calls were emitted', 502, 'max_output_tokens_exceeded')
+            message, finish = adapter.parse(content) if tool_mode else ({'role': 'assistant', 'content': content}, 'length' if output_budget.truncated else 'stop')
             if tool_mode and message.get('content'):
                 message['content'] = neutralize_brand(message['content'])
             return message, finish
@@ -842,9 +857,9 @@ def create_app(overrides: dict | None = None) -> FastAPI:
                     async for text in iterator:
                         seen = True
                         yield encode(chunk({'content': text}))
-                    if not seen:
+                    if not seen and not output_budget.truncated:
                         raise UpstreamError('Upstream completed without text', 502, 'empty_response')
-                    yield encode(chunk({}, 'stop'))
+                    yield encode(chunk({}, 'length' if output_budget.truncated else 'stop'))
                     yield 'data: [DONE]\n\n'
             except (UpstreamError, ToolProtocolError) as exc:
                 request.state.gateway_error_code = exc.code

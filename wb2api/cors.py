@@ -14,7 +14,9 @@ class InferenceCORSMiddleware:
             expose_headers=[
                 'X-Request-ID', 'Retry-After', 'X-WB2Api-Ignored-Parameters',
                 'X-WB2Api-Reasoning-Mode', 'X-WB2Api-Reasoning-Effort',
-                'X-WB2Api-Tool-Stream',
+                'X-WB2Api-Tool-Stream', 'X-WB2Api-Token-Count-Mode',
+                'X-WB2Api-Context-Tokens', 'X-WB2Api-Max-Input-Tokens',
+                'X-WB2Api-Max-Output-Tokens', 'X-WB2Api-Output-Budget',
             ],
             max_age=600,
         )

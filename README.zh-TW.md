@@ -22,7 +22,11 @@
 
 以上是路由別名，不證明上游實際基礎型號，也不代表能選擇底層模型。舊別名 `wabi`、`wabi-image`、`wabi-video` 繼續相容；`/v1/models` 僅列出三個新別名。
 
-三種協定配接支援文字、串流及用戶端工具結果續接。工具呼叫透過提示詞相容，由用戶端執行並回傳結果，不代表完整原生 OpenAI／Anthropic 功能。`reasoning_effort`（`none`、`minimal`、`low`、`medium`、`high`、`xhigh`、`max`）僅引導提示詞，不設定原生推理預算，也不回傳真實 `reasoning_content`。常見取樣與長度參數雖被接受，但不在上游生效；回應標頭 `X-WB2Api-Ignored-Parameters` 會列出。
+三種協定配接支援文字、串流及用戶端工具結果續接。工具呼叫透過提示詞相容，由用戶端執行並回傳結果，不代表完整原生 OpenAI／Anthropic 功能。`reasoning_effort`（`none`、`minimal`、`low`、`medium`、`high`、`xhigh`、`max`）僅引導提示詞，不設定原生推理預算，也不回傳真實 `reasoning_content`。取樣參數雖被接受，但不在上游生效；回應標頭 `X-WB2Api-Ignored-Parameters` 會列出。
+
+對話閘道預算依 [Sol 官方規格](https://developers.openai.com/api/docs/models/gpt-6.1-sol) 設定：總上下文 1,050,000、輸入 922,000、輸出 128,000 Tokens。使用 **`o200k_base` 近似計數**，不代表上游真實 tokenizer、用量或已驗證容量。計數包含完整編譯提示詞（歷史、工具與閘道指令）。`max_completion_tokens`／`max_tokens` 及 Responses 的 `max_output_tokens` 可指定較小的本地輸出預算，前者優先；一般文字達到預算時以 `length`／`incomplete`／`max_tokens` 終止，工具信封超限則明確報錯，不傳送不完整呼叫。預算不控制上游隱藏推理。對話不再有舊的 20 萬字元／1 MiB 限制，傳輸保護為 64 MiB。Responses 續傳快取每項最多 32 MiB、合計 64 MiB、保留 15 分鐘，可能過期或被淘汰。媒體提示詞限制不變。
+
+`WB2API_DELETE_COMPLETED_THREADS=true` 預設在成功完成後刪除本次請求建立的上游會話，圖片和影片須先取得實際附件 URL；刪除後讀回確認，失敗僅記錄日誌、不丟棄結果。不批次刪除 App 既有會話，未完成或中途取消的工作不貿然刪除。設為 `false` 可保留新會話；刪除會話不代表 CDN 媒體永久保存。
 
 ## 快速部署
 

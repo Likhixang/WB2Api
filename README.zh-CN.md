@@ -22,7 +22,11 @@
 
 以上是路由别名，不证明上游实际基座型号，也不代表可选择底层模型。旧别名 `wabi`、`wabi-image`、`wabi-video` 继续兼容；`/v1/models` 仅列出三个新别名。
 
-三种协议适配支持文本、流式及客户端工具结果续接。工具调用通过提示词兼容，由客户端执行并回传结果，不代表完整原生 OpenAI／Anthropic 功能。`reasoning_effort`（`none`、`minimal`、`low`、`medium`、`high`、`xhigh`、`max`）仅引导提示词，不设置原生推理预算，也不返回真实 `reasoning_content`。常见采样与长度参数虽被接受，但不在上游生效；响应头 `X-WB2Api-Ignored-Parameters` 会列出。
+三种协议适配支持文本、流式及客户端工具结果续接。工具调用通过提示词兼容，由客户端执行并回传结果，不代表完整原生 OpenAI／Anthropic 功能。`reasoning_effort`（`none`、`minimal`、`low`、`medium`、`high`、`xhigh`、`max`）仅引导提示词，不设置原生推理预算，也不返回真实 `reasoning_content`。采样参数虽被接受，但不在上游生效；响应头 `X-WB2Api-Ignored-Parameters` 会列出。
+
+对话网关预算按 [Sol 官方规格](https://developers.openai.com/api/docs/models/gpt-6.1-sol) 设置：总上下文 1,050,000、输入 922,000、输出 128,000 Tokens。使用 **`o200k_base` 近似计数**，不代表上游真实 tokenizer、用量或已验证容量。计数涵盖完整编译提示词（历史、工具和网关指令）。`max_completion_tokens`／`max_tokens` 及 Responses 的 `max_output_tokens` 可指定更小的本地输出预算，前者优先；普通文本达到预算后以 `length`／`incomplete`／`max_tokens` 终止，工具信封超限则明确报错，不发送半截调用。预算不控制上游隐藏推理。对话不再有旧的 20 万字符／1 MiB 限制，传输保护为 64 MiB。Responses 续传缓存每项最多 32 MiB、总计 64 MiB、保留 15 分钟，可能过期或被淘汰。媒体提示词限制不变。
+
+`WB2API_DELETE_COMPLETED_THREADS=true` 默认在成功完成后删除本次请求新建的上游会话，图片和视频须先取得实际附件 URL；删除后读回确认，失败只记日志、不丢弃结果。不批量删除 App 已有会话，未完成或中途取消的任务不贸然删除。设为 `false` 可保留新会话；删除会话不代表 CDN 媒体永久保存。
 
 ## 快速部署
 

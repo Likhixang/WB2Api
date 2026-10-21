@@ -49,11 +49,13 @@ class Wabi:
     def __init__(self, store: Any, config: dict[str, Any]) -> None:
         self.store = store
         self.config = dict(config)
+        self.delete_completed_threads = config.get("delete_completed_threads", True)
+        self._owned_threads = {}
         self.timeout = self._positive_float(config.get("request_timeout", 120), "request_timeout")
-        self.max_event_bytes = self._positive_int(config.get("max_sse_event_bytes", 1024 * 1024), "max_sse_event_bytes")
+        self.max_event_bytes = self._positive_int(config.get("max_sse_event_bytes", 8 * 1024 * 1024), "max_sse_event_bytes")
         self.max_text_bytes = self._positive_int(config.get("max_response_text_bytes", 8 * 1024 * 1024), "max_response_text_bytes")
         self.queue_size = self._positive_int(config.get("sse_queue_size", 64), "sse_queue_size")
-        self.max_json_bytes = self._positive_int(config.get("max_json_bytes", 1024 * 1024), "max_json_bytes")
+        self.max_json_bytes = self._positive_int(config.get("max_json_bytes", 64 * 1024 * 1024), "max_json_bytes")
         base_url = config.get("base_url", "https://app.getwabi.ai")
         if not isinstance(base_url, str):
             raise ValueError("base_url must be a root HTTP(S) URL")
@@ -354,6 +356,9 @@ class Wabi:
                 # a context could cancel unrelated caller work while suspended.
                 return await asyncio.wait_for(awaitable, max(0, deadline - loop.time()))
 
+            thread_id = None
+            completed = False
+            account = None
             reader: asyncio.Task[None] | None = None
             try:
                 account = await bounded(self._account(account_id))
@@ -418,6 +423,7 @@ class Wabi:
                 thread_id = (thread.get("thread") or {}).get("id") or (thread.get("state") or {}).get("thread_id") or thread.get("id")
                 if not isinstance(thread_id, str) or not thread_id:
                     raise UpstreamError("Thread creation returned no id", code="invalid_upstream_response")
+                self._owned_threads[thread_id] = account
                 # New group threads start an automatic opening turn. Posting
                 # while it runs lets Wabi coalesce the user prompt into that turn,
                 # so turn-ID filtering alone cannot separate the greeting. Never
@@ -487,6 +493,8 @@ class Wabi:
                         text, done = mapper.consume(event, thread_id, turn_id)
                     except ProtocolError as exc:
                         raise UpstreamError(exc.message, exc.status, exc.code) from exc
+                    if done:
+                        completed = True
                     if text is not None:
                         yield text
                     if done:
@@ -499,3 +507,6 @@ class Wabi:
                     with suppress(asyncio.CancelledError):
                         await reader
                     self._readers.discard(reader)
+                if thread_id:
+                    from .cleanup import cleanup_thread
+                    await cleanup_thread(self, account, thread_id, completed=completed)

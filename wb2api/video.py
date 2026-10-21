@@ -194,6 +194,9 @@ class Video:
             raise UpstreamError('A nonempty video prompt of at most 200000 characters is required',
                                 400, 'invalid_prompt')
         w = self.wabi
+        thread_id = None
+        account = None
+        completed = False
         try:
             # One independent deadline covers lock wait, refresh, creation, the
             # single message POST and all read-only polling, including media/get.
@@ -209,6 +212,7 @@ class Video:
                     if not isinstance(thread, dict):
                         raise _protocol()
                     thread_id = _id(thread.get('id'))
+                    w._owned_threads[thread_id] = account
                     root = w.base_url + '/api/v1/threads/' + quote(thread_id, safe='')
                     readback = await w._json('GET', root, headers=headers)
                     thread = readback.get('thread')
@@ -235,6 +239,7 @@ class Video:
                         messages = await self._messages(root, headers)
                         urls = await self._artifacts(messages, thread_id, turn_id, headers)
                         if urls:
+                            completed = True
                             return urls
                         # Idle with no artifact is not completion: a background
                         # video callback may arrive minutes after the queue ack.
@@ -246,3 +251,7 @@ class Video:
         except httpx.HTTPError as exc:
             raise UpstreamError('Video transport failed; request was not replayed',
                                 code='upstream_transport_error') from exc
+        finally:
+            if thread_id:
+                from .cleanup import cleanup_thread
+                await cleanup_thread(w, account, thread_id, completed=completed)

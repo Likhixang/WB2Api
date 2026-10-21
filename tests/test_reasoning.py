@@ -81,7 +81,7 @@ def test_standard_client_fields_accepted_with_disclosure(session, stream):
     assert r.status_code == 200
     assert r.headers['x-wb2api-reasoning-effort'] == 'max'
     assert set(r.headers['x-wb2api-ignored-parameters'].split(',')) == {
-        'temperature', 'top_p', 'max_tokens', 'max_completion_tokens', 'user',
+        'temperature', 'top_p', 'user',
         'frequency_penalty', 'presence_penalty', 'seed', 'stream_options'}
     assert 'compatible' in r.text and 'reasoning_content' not in r.text
 

@@ -10,6 +10,10 @@ RUN pip install --no-cache-dir -r requirements.txt \
     && groupadd --gid 10001 wb2api \
     && useradd --uid 10001 --gid wb2api --no-create-home wb2api \
     && mkdir /data && chown wb2api:wb2api /data
+ENV TIKTOKEN_CACHE_DIR=/app/tokenizer-cache
+RUN mkdir -p "$TIKTOKEN_CACHE_DIR" \
+    && python -c "import tiktoken; tiktoken.get_encoding('o200k_base')" \
+    && chmod -R a+rX "$TIKTOKEN_CACHE_DIR"
 COPY --chown=wb2api:wb2api wb2api ./wb2api
 USER 10001:10001
 EXPOSE 8080

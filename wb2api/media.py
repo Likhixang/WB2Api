@@ -173,6 +173,9 @@ class Media:
         if not isinstance(prompt, str) or not prompt.strip() or len(prompt) > 200000:
             raise UpstreamError('A nonempty image prompt of at most 200000 characters is required', 400, 'invalid_prompt')
         reader = None
+        thread_id = None
+        account = None
+        completed = False
         try:
             # Unlike an async generator, this coroutine can safely keep one
             # deadline across lock wait, credentials, opening, POST and completion.
@@ -242,6 +245,7 @@ class Media:
                     thread_id = thread.get('id') if isinstance(thread, dict) else None
                     if not isinstance(thread_id, str) or not thread_id:
                         raise UpstreamError('Media thread creation returned no id', code='invalid_upstream_response')
+                    w._owned_threads[thread_id] = account
                     state = ImageTurn(thread_id, max_result_bytes=w.max_text_bytes)
                     while not state.consume(await next_event()):
                         pass
@@ -271,7 +275,9 @@ class Media:
                     state.accept(turn_id)
                     while not state.consume(await next_event()):
                         pass
-                    return state.result()
+                    result = state.result()
+                    completed = True
+                    return result
         except (TimeoutError, httpx.TimeoutException) as exc:
             raise UpstreamError('Media request timed out; request was not replayed', 504, 'upstream_timeout') from exc
         except httpx.HTTPError as exc:
@@ -282,3 +288,6 @@ class Media:
                 with suppress(asyncio.CancelledError):
                     await reader
                 w._readers.discard(reader)
+            if thread_id:
+                from .cleanup import cleanup_thread
+                await cleanup_thread(w, account, thread_id, completed=completed)

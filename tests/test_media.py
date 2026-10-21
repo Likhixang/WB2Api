@@ -178,6 +178,7 @@ class FixtureTransport:
         self.hang, self.invalid_json = hang, invalid_json
         self.posts = []
         self.sse_connected = False
+        self.deletion = []
 
     async def __call__(self, request):
         path = request.url.path
@@ -186,6 +187,9 @@ class FixtureTransport:
             if self.fail_at == 'sse':
                 return httpx.Response(401, json={'secret': 'NEVER_ECHO'})
             return httpx.Response(200, headers={'content-type': 'text/event-stream'}, stream=self.stream)
+        if path == '/api/v1/threads/thread' and request.method in ('DELETE', 'GET'):
+            self.deletion.append(request.method)
+            return httpx.Response(204) if request.method == 'DELETE' else httpx.Response(404)
         assert request.method == 'POST'  # no media downloads or invented endpoints
         assert self.sse_connected  # SSE must be connected before thread creation
         self.posts.append((path, json.loads(request.content)))
@@ -233,6 +237,7 @@ def run_scenario(**options):
 def test_full_verified_media_flow_and_no_retries_or_downloads():
     result, transport = run_scenario()
     assert result == [URL]
+    assert transport.deletion == ['DELETE', 'GET']
     assert len(transport.posts) == 2
     thread, message = transport.posts
     assert thread[1]['title'].startswith('Image ') and thread[1]['kind'] == 'group'

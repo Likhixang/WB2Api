@@ -56,6 +56,7 @@ class Fixture:
         self.media = {'data': {'id': AID, 'attachment_id': AID,
                                'mime_type': 'video/mp4', 'url': URL}}
         self.wrapped = True
+        self.deleted = False
 
     async def __call__(self, request):
         path = request.url.path
@@ -68,6 +69,11 @@ class Fixture:
             assert set(body) == {'title', 'request_id', 'kind'} and body['kind'] == 'private'
             return httpx.Response(200, json={'thread': {'id': THREAD, 'kind': 'private'}})
         if path == '/api/v1/threads/' + THREAD:
+            if request.method == 'DELETE':
+                self.deleted = True
+                return httpx.Response(204)
+            if self.deleted:
+                return httpx.Response(404)
             return httpx.Response(200, json={'thread': {'id': THREAD, 'kind': 'private'}})
         if path.endswith('/turn-state'):
             state = {'thread_id': THREAD, 'active_turn': None, 'queued_turns': [],
@@ -116,7 +122,7 @@ async def test_private_pending_idle_then_cross_turn_completed_callback(wrapped):
     w, video = await setup(fixture)
     try:
         assert await video.generate_video('account', 'a red boat video') == [URL]
-        assert fixture.polls == 3
+        assert fixture.polls == 3 and fixture.deleted
         assert len(fixture.posts()) == 2
         assert not w._locks and not w._readers
         assert all('events' not in path for _, path, _ in fixture.calls)
@@ -184,6 +190,7 @@ async def test_correlated_failure_is_error(status):
         with pytest.raises(UpstreamError) as exc:
             await video.generate_video('account', 'a red boat video')
         assert exc.value.code == 'media_generation_failed'
+        assert not fixture.deleted
         assert len(fixture.posts()) == 2 and not w._locks
     finally:
         await w.close()

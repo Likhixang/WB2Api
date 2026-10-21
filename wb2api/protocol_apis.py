@@ -9,7 +9,7 @@ reasoning budget. Usage is unknown (Responses null, Messages {}) unless supplied
 by the kernel; no estimated/billable token counts are manufactured.
 
 Responses continuation is private, process-local, API-key isolated and bounded
-(15 minutes, 256 entries, 16 MiB total, 1 MiB/entry). Restart, TTL, eviction and
+(15 minutes, 256 entries, 64 MiB total, 32 MiB/entry). Restart, TTL, eviction and
 store=false make an ID unavailable; this is NOT durable OpenAI storage. IDs are
 cached only after successful generation, including successful streaming EOF.
 """
@@ -30,6 +30,7 @@ from pydantic import ValidationError
 from starlette.exceptions import HTTPException
 from starlette.responses import JSONResponse, Response, StreamingResponse
 
+from .budgets import REQUEST_BYTES
 from .tool_compat import ToolAdapter, ToolProtocolError
 
 
@@ -272,7 +273,7 @@ def _normalized(body, anthropic=False):
 
 class ResponseCache:
     """Byte-counted LRU snapshots; never keeps raw API keys or writes to disk."""
-    def __init__(self, ttl=900, max_entries=256, max_bytes=16 * 1024 * 1024, max_entry_bytes=1024 * 1024):
+    def __init__(self, ttl=900, max_entries=256, max_bytes=64 * 1024 * 1024, max_entry_bytes=32 * 1024 * 1024):
         self.ttl, self.max_entries, self.max_bytes, self.max_entry_bytes = ttl, max_entries, max_bytes, max_entry_bytes
         self.entries, self.bytes, self.lock = OrderedDict(), 0, threading.Lock()
 
@@ -583,8 +584,8 @@ def install_protocol_apis(app, completion_handler, completion_model, inference_d
         try:
             auth_request, owner = await authorize(request, anthropic)
             raw = await request.body()
-            if len(raw) > 1024 * 1024:
-                raise ProtocolError('Request exceeds 1 MiB', 413, 'body_too_large')
+            if len(raw) > REQUEST_BYTES:
+                raise ProtocolError('Request exceeds the transport byte limit', 413, 'body_too_large')
             try:
                 body = json.loads(raw)
             except (ValueError, UnicodeError):

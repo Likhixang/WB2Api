@@ -92,6 +92,8 @@ async def test_pipeline_subscribes_before_post_and_closes_reader(tmp_path):
             assert subscribed.is_set()
             submitted.set()
             return httpx.Response(200, json={'turn_id': 'turn'})
+        if request.url.path == '/api/v1/threads/thread':
+            return httpx.Response(204) if request.method == 'DELETE' else httpx.Response(404)
         raise AssertionError(request.url)
 
     await wabi.client.aclose()
@@ -99,7 +101,8 @@ async def test_pipeline_subscribes_before_post_and_closes_reader(tmp_path):
     try:
         assert ''.join([text async for text in wabi.stream_chat(account['id'], 'prompt', MAPPING)]) == 'hello'
         assert order == ['/api/v1/chat/events', '/api/v1/threads',
-                         '/api/v1/threads/thread/turn-state', '/api/v1/threads/thread/messages']
+                         '/api/v1/threads/thread/turn-state', '/api/v1/threads/thread/messages',
+                         '/api/v1/threads/thread', '/api/v1/threads/thread']
         assert not wabi._readers and not wabi._locks
     finally:
         await wabi.close()
