@@ -168,6 +168,12 @@
     state.key = "";
     state.tokens = [];
     state.status = null;
+    logsLoaded = false;
+    $("logs-entries").replaceChildren();
+    $("logs-error").classList.add("hidden");
+    $("logs-capacity").textContent = "容量待加载";
+    $("logs-active").textContent = "进行中 —";
+    $("logs-request-id").value = "";
     $("admin-key").value = "";
     $("token-table-body").replaceChildren();
     $("api-key-text").textContent = "未解锁";
@@ -889,6 +895,169 @@
     }
   };
 
+  // --- Bounded request activity: one snapshot and one request at a time. ---
+  let logsTimer = null;
+  let logsController = null;
+  let logsGeneration = 0;
+  let logsLoaded = false;
+  function logsOpen() {
+    return activeModal?.id === "logs-modal" && !!state.key;
+  }
+  function stopLogs() {
+    clearTimeout(logsTimer);
+    logsTimer = null;
+    logsGeneration++;
+    logsController?.abort();
+    logsController = null;
+    $("btn-logs-refresh").disabled = false;
+    $("logs-entries").removeAttribute("aria-busy");
+  }
+  function scheduleLogs() {
+    clearTimeout(logsTimer);
+    if (logsOpen() && !document.hidden && $("logs-auto").checked)
+      logsTimer = setTimeout(refreshLogs, 3000);
+  }
+  function logText(value, limit = 2048) {
+    return String(value ?? "—").slice(0, limit);
+  }
+  function logTime(value) {
+    const date = new Date(typeof value === "number" && value < 1e12 ? value * 1000 : value);
+    return value != null && Number.isFinite(date.getTime())
+      ? date.toLocaleString("zh-CN", { hour12: false }) : "—";
+  }
+  function logMs(value) {
+    return typeof value === "number" && Number.isFinite(value) ? `${Math.round(value)} ms` : "—";
+  }
+  function renderLogs(data) {
+    const fragment = document.createDocumentFragment();
+    const entries = data.entries.slice(0, 200);
+    for (const entry of entries) {
+      if (!entry || typeof entry !== "object") continue;
+      const row = document.createElement("article");
+      row.className = "log-entry";
+      const head = document.createElement("div");
+      head.className = "log-entry-heading";
+      const badge = document.createElement("span");
+      const failed = entry.completed === false || entry.disconnected || Number(entry.status) >= 400 || entry.error_type || entry.gateway_error_code;
+      badge.className = `badge ${entry.in_flight ? "warning" : failed ? "error" : "good"}`;
+      badge.textContent = entry.in_flight ? "正在处理" : failed ? "错误 / 未完成" : "已完成";
+      const time = document.createElement("time");
+      time.className = "muted";
+      time.textContent = logTime(entry.timestamp);
+      head.append(badge, time);
+      const path = document.createElement("p");
+      path.className = "log-path";
+      path.textContent = `${logText(entry.method, 24)} ${logText(entry.path)}`;
+      const id = document.createElement("p");
+      id.className = "mono log-request-id";
+      id.textContent = `请求 ID：${logText(entry.request_id, 128)}`;
+      const metrics = document.createElement("p");
+      metrics.className = "log-metrics";
+      metrics.textContent = `HTTP ${logText(entry.status, 16)} · 耗时 ${logMs(entry.duration_ms)} · 首包 ${logMs(entry.first_byte_ms)} · 完成：${entry.in_flight ? "待定" : entry.completed === true ? "是" : entry.completed === false ? "否" : "—"} · 断连：${entry.disconnected === true ? "是" : entry.disconnected === false ? "否" : "—"}`;
+      row.append(head, path, id, metrics);
+      if (entry.error_type || entry.gateway_error_code) {
+        const error = document.createElement("p");
+        error.className = "log-error-detail";
+        error.textContent = `错误类型：${logText(entry.error_type, 256)} · 网关错误码：${logText(entry.gateway_error_code, 256)}`;
+        row.append(error);
+      }
+      fragment.append(row);
+    }
+    if (!fragment.childNodes.length) {
+      const empty = document.createElement("p");
+      empty.className = "empty-state";
+      empty.textContent = "暂无符合条件的日志。可清除筛选条件或稍后刷新。";
+      fragment.append(empty);
+    }
+    // Retain the reader's scroll position instead of jumping on each poll.
+    const scroll = $("logs-scroll").scrollTop;
+    $("logs-entries").replaceChildren(fragment);
+    $("logs-scroll").scrollTop = scroll;
+    const store = data.storage || {};
+    const mb = (n) => typeof n === "number" && Number.isFinite(n) ? (n / 1048576).toFixed(2) : "—";
+    const cap = typeof store.max_bytes === "number" ? store.max_bytes : null;
+    const fileCap = typeof cap === "number" && Number.isInteger(store.backups) ? Math.floor(cap / (store.backups + 1)) : null;
+    $("logs-capacity").textContent = store.enabled === false ? "持久化已关闭 · 仅展示内存状态"
+      : `总使用 ${mb(store.used_bytes)} / ${mb(cap)} MiB · 单文件 ${mb(fileCap)} MiB × ${typeof store.backups === "number" ? store.backups + 1 : "—"}（含备份）`;
+    $("logs-active").textContent = `进行中 ${Number.isInteger(data.active_count) ? data.active_count : "—"}`;
+    $("logs-status").textContent = `已更新 ${new Date().toLocaleTimeString("zh-CN", { hour12: false })} · 当前 ${$("logs-entries").querySelectorAll(".log-entry").length} 条 · ${$("logs-auto").checked ? "自动刷新中" : "自动刷新已暂停"}`;
+    logsLoaded = true;
+  }
+  async function refreshLogs() {
+    clearTimeout(logsTimer);
+    if (!logsOpen() || document.hidden || logsController) return;
+    const generation = logsGeneration;
+    const controller = new AbortController();
+    logsController = controller;
+    const timeout = setTimeout(() => controller.abort(), 20000);
+    const requestKey = state.key;
+    $("btn-logs-refresh").disabled = true;
+    $("logs-entries").setAttribute("aria-busy", "true");
+    $("logs-status").textContent = logsLoaded ? "正在刷新，保留上次快照…" : "正在加载日志…";
+    const query = new URLSearchParams({ limit: "200" });
+    const requestId = $("logs-request-id").value.trim();
+    if (requestId) query.set("request_id", requestId);
+    if ($("logs-errors").checked) query.set("errors_only", "true");
+    try {
+      const response = await fetch(`/admin/api/logs?${query}`, {
+        headers: { Accept: "application/json", Authorization: `Bearer ${requestKey}` },
+        cache: "no-store", signal: controller.signal,
+      });
+      if (generation !== logsGeneration || !logsOpen()) return;
+      if (response.status === 401) {
+        if (state.key === requestKey) lock("管理员密钥无效或已过期，请重新解锁");
+        return;
+      }
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const data = await response.json();
+      if (generation !== logsGeneration || !logsOpen()) return;
+      if (!Array.isArray(data?.entries)) throw new Error("日志响应格式异常");
+      renderLogs(data);
+      $("logs-error").classList.add("hidden");
+    } catch (err) {
+      if (generation !== logsGeneration || !logsOpen()) return;
+      $("logs-error").textContent = `刷新失败：${err.name === "AbortError" ? "请求超时" : err.message}。${logsLoaded ? "已保留上次快照（可能与当前筛选不符）。" : "暂无可用快照。"}可点击立即刷新重试。`;
+      $("logs-error").classList.remove("hidden");
+      $("logs-status").textContent = "同步失败，等待重试";
+      if (!logsLoaded) $("logs-entries").textContent = "日志加载失败，请重试。";
+    } finally {
+      clearTimeout(timeout);
+      if (logsController === controller) {
+        logsController = null;
+        $("btn-logs-refresh").disabled = false;
+        $("logs-entries").removeAttribute("aria-busy");
+        scheduleLogs();
+      }
+    }
+  }
+  window.openLogsModal = function () {
+    if (!state.key) return;
+    openModal("logs-modal");
+    refreshLogs();
+  };
+  window.closeLogsModal = function () { closeModal(); };
+  $("logs-filters").addEventListener("submit", (event) => {
+    event.preventDefault();
+    refreshLogs();
+  });
+  function changeLogFilters() {
+    stopLogs();
+    if (logsOpen()) logsTimer = setTimeout(refreshLogs, 350);
+  }
+  $("logs-request-id").addEventListener("input", changeLogFilters);
+  $("logs-errors").addEventListener("change", changeLogFilters);
+  $("logs-auto").addEventListener("change", () => {
+    stopLogs();
+    $("logs-status").textContent = $("logs-auto").checked ? "自动刷新中…" : "自动刷新已暂停，可手动刷新";
+    if ($("logs-auto").checked) refreshLogs();
+  });
+  document.addEventListener("visibilitychange", () => {
+    if (!logsOpen()) return;
+    stopLogs();
+    if (document.hidden) $("logs-status").textContent = "页面位于后台，刷新已暂停";
+    else if ($("logs-auto").checked) refreshLogs();
+  });
+
   // --- API Tokens Modal & Management ---
   window.openTokenModal = function () {
     openModal("token-modal");
@@ -1183,10 +1352,11 @@
     ))
       el.inert = true;
     document.body.style.overflow = "hidden";
-    activeModal.querySelector("input,textarea,button")?.focus();
+    activeModal.querySelector("input,select,textarea,button")?.focus();
   }
   function closeModal() {
     if (!activeModal) return;
+    if (activeModal.id === "logs-modal") stopLogs();
     activeModal.classList.add("hidden");
     activeModal = null;
     for (const el of document.querySelectorAll(
@@ -1208,7 +1378,7 @@
     if (e.key === "Tab" && activeModal) {
       const els = [
         ...activeModal.querySelectorAll(
-          "button:not(:disabled),input:not(:disabled),textarea:not(:disabled),a[href]",
+          "button:not(:disabled),input:not(:disabled),select:not(:disabled),textarea:not(:disabled),a[href],[tabindex='0']",
         ),
       ].filter((el) => el.getClientRects().length);
       const first = els[0],

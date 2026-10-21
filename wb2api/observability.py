@@ -81,6 +81,10 @@ class RequestLogMiddleware:
         if max_bytes and per_file < 1024:
             raise ValueError('log budget must allow at least 1024 bytes per file')
         self.app = app
+        self.directory = Path(data_dir) / 'logs'
+        self.max_bytes = max_bytes
+        self.backups = backups
+        self.active = {}
         self.handler = None
         self.logger = logging.Logger('wb2api.requests.' + uuid.uuid4().hex, level=logging.INFO)
         self.logger.propagate = False
@@ -111,6 +115,58 @@ class RequestLogMiddleware:
         self.handler.setFormatter(logging.Formatter('%(message)s'))
         self.logger.addHandler(self.handler)
 
+    def snapshot(self, limit=200, request_id='', errors_only=False):
+        """Bounded newest-first tail; never accept a caller-controlled filename."""
+        rows = []
+        used = 0
+        remaining = 2 * 1024 * 1024
+        files = [self.directory / ('requests.log' + ('.' + str(i) if i else ''))
+                 for i in range(self.backups + 1)]
+        for path in files:
+            if not path.exists() or path.is_symlink() or not path.is_file():
+                continue
+            size = path.stat().st_size
+            used += size
+            if not remaining or len(rows) >= limit:
+                continue
+            count = min(size, remaining)
+            with path.open('rb') as handle:
+                handle.seek(size - count)
+                raw = handle.read(count)
+            remaining -= count
+            lines = raw.splitlines()
+            if count < size and lines:
+                lines = lines[1:]
+            for line in reversed(lines):
+                try:
+                    row = json.loads(line)
+                except (ValueError, UnicodeError):
+                    continue
+                if (not isinstance(row, dict) or not isinstance(row.get('request_id'), str)
+                        or not isinstance(row.get('timestamp'), str)
+                        or (row.get('status') is not None and (type(row['status']) is not int or not 100 <= row['status'] <= 599))):
+                    continue
+                # Return only the diagnostic schema, never arbitrary disk fields.
+                row = {key: value for key, value in row.items() if key in {
+                    'timestamp', 'request_id', 'method', 'path', 'status', 'duration_ms',
+                    'first_byte_ms', 'completed', 'disconnected', 'error_type', 'gateway_error_code'}}
+                if request_id and row['request_id'] != request_id:
+                    continue
+                failed = bool(row.get('gateway_error_code') or row.get('error_type') or row.get('disconnected') or row.get('status', 0) and row['status'] >= 400 or not row.get('completed'))
+                if errors_only and not failed:
+                    continue
+                rows.append(row)
+                if len(rows) >= limit:
+                    break
+        now = time.monotonic()
+        active = [{**row, 'duration_ms': round((now - started) * 1000, 3)}
+                  for started, row in self.active.values()
+                  if (not request_id or row['request_id'] == request_id) and not errors_only]
+        entries = sorted(active + rows, key=lambda row: row.get('timestamp', ''), reverse=True)[:limit]
+        return {'entries': entries, 'active_count': len(self.active),
+                'storage': {'enabled': bool(self.max_bytes), 'max_bytes': self.max_bytes,
+                            'backups': self.backups, 'used_bytes': used}}
+
     def close(self):
         if not self._closed:
             self._closed = True
@@ -130,6 +186,10 @@ class RequestLogMiddleware:
                 self.close()
         if scope['type'] != 'http':
             return await self.app(scope, receive, send)
+        if scope.get('app') is not None:
+            scope['app'].state.request_logger = self
+        if scope.get('path') == '/admin/api/logs':
+            return await self.app(scope, receive, send)
         started = time.monotonic()
         request_id = str(uuid.uuid4())
         status = None
@@ -137,6 +197,12 @@ class RequestLogMiddleware:
         completed = False
         disconnected = False
         error_type = None
+        active = {'timestamp': datetime.now(timezone.utc).isoformat(timespec='milliseconds'),
+                  'request_id': request_id, 'method': scope.get('method') if scope.get('method') in _METHODS else 'OTHER',
+                  'path': _safe_path(scope.get('path', '')), 'status': None, 'first_byte_ms': None,
+                  'completed': False, 'disconnected': False, 'error_type': None, 'in_flight': True}
+        if len(self.active) < 256:
+            self.active[request_id] = (started, active)
 
         async def observed_receive():
             nonlocal disconnected
@@ -155,9 +221,11 @@ class RequestLogMiddleware:
             if message['type'] == 'http.response.start':
                 value = message.get('status')
                 status = value if isinstance(value, int) and 100 <= value <= 599 else None
+                active['status'] = status
             elif message['type'] == 'http.response.body':
                 if message.get('body') and first_byte is None:
                     first_byte = time.monotonic()
+                    active['first_byte_ms'] = round((first_byte - started) * 1000, 3)
                 if not message.get('more_body', False):
                     completed = True
 
@@ -176,6 +244,7 @@ class RequestLogMiddleware:
             error_type = 'ApplicationError'
             raise
         finally:
+            self.active.pop(request_id, None)
             if disconnected and error_type is None:
                 error_type = 'ClientDisconnect'
             elif not completed and error_type is None:

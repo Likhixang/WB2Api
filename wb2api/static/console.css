@@ -1409,6 +1409,30 @@ html[data-session="checking"] #session-screen {
     bottom: 16px;
   }
 }
+/* Activity uses the existing surface tokens in both color schemes. */
+.logs-card { max-width: 980px; }
+.logs-filters { display: flex; gap: 12px; align-items: flex-end; flex-wrap: wrap; margin: 16px 0; }
+.logs-request-filter { flex: 1 1 260px; min-width: 0; }
+.logs-request-filter label { margin-top: 0; }
+.logs-check { display: inline-flex; align-items: center; gap: 8px; min-height: 44px; margin: 0; cursor: pointer; }
+.logs-check input { width: 18px; height: 18px; min-height: 0; padding: 0; margin: 0; accent-color: var(--accent); }
+.logs-summary { display: flex; justify-content: space-between; gap: 8px 20px; flex-wrap: wrap; padding: 12px; background: var(--subtle); border: 1px solid var(--line); border-radius: 10px; font-size: 12px; margin-bottom: 10px; }
+#logs-active { color: var(--accent); font-weight: 600; }
+.logs-scroll { height: 380px; max-height: 48dvh; overflow: auto; overscroll-behavior: contain; border: 1px solid var(--line); border-radius: 10px; margin-top: 12px; scrollbar-gutter: stable; }
+.log-entry { padding: 14px 16px; border-bottom: 1px solid var(--line); overflow-wrap: anywhere; }
+.log-entry:last-child { border-bottom: 0; }
+.log-entry-heading { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+.log-path { font: 12px/1.7 ui-monospace, SFMono-Regular, Consolas, monospace; color: var(--text); }
+.log-request-id { margin-top: 4px; user-select: text; }
+.log-metrics { margin-top: 7px; font-size: 11px; color: var(--muted); }
+.log-error-detail { margin-top: 5px; font-size: 11px; color: var(--error); }
+@media (max-width: 599px) {
+  .logs-filters { gap: 8px 14px; }
+  .logs-request-filter { flex-basis: 100%; }
+  .logs-filters > button { width: 100%; }
+  .logs-scroll { height: 320px; max-height: 45dvh; }
+  .log-entry { padding: 12px; }
+}
 @media (prefers-reduced-motion: reduce) {
   *,
   *:before,

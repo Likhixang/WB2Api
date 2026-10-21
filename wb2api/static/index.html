@@ -119,6 +119,9 @@
           <p class="muted">先检查账号就绪状态，再开始连接你的客户端。</p>
         </div>
         <div id="nav-actions" class="toolbar hidden">
+          <button id="btn-logs" onclick="openLogsModal()" aria-haspopup="dialog" aria-controls="logs-modal">
+            <i data-lucide="scroll-text"></i>实时日志
+          </button>
           <button onclick="openTokenModal()">
             <i data-lucide="key-round"></i>API Keys
           </button>
@@ -396,6 +399,28 @@
         ><span>管理密钥与客户端 API Key 请分别保管</span>
       </footer>
     </main>
+    <div id="logs-modal" role="dialog" aria-modal="true" aria-labelledby="logs-title" aria-describedby="logs-description" class="modal hidden" tabindex="-1">
+      <div class="modal-card logs-card">
+        <div class="modal-heading">
+          <div><p class="section-index">REQUEST ACTIVITY</p><h2 id="logs-title">实时请求日志</h2></div>
+          <button aria-label="关闭实时日志" onclick="closeLogsModal()"><i data-lucide="x"></i></button>
+        </div>
+        <div class="modal-body">
+          <p id="logs-description" class="muted">仅展示脱敏请求元数据，不含请求或响应正文。最新 200 条快照，不累积追加；进行中请求尚未产生最终结果。</p>
+          <form id="logs-filters" class="logs-filters">
+            <div class="logs-request-filter"><label for="logs-request-id">请求 ID <span class="muted">精确匹配，留空查看全部</span></label><input id="logs-request-id" placeholder="输入 request_id" maxlength="128" autocomplete="off" spellcheck="false" /></div>
+            <label class="logs-check" for="logs-errors"><input id="logs-errors" type="checkbox" />仅错误</label>
+            <label class="logs-check" for="logs-auto"><input id="logs-auto" type="checkbox" role="switch" checked />自动刷新 · 3 秒</label>
+            <button id="btn-logs-refresh" type="submit"><i data-lucide="refresh-cw"></i>立即刷新</button>
+          </form>
+          <div class="logs-summary"><span id="logs-capacity">容量待加载</span><span id="logs-active">进行中 —</span></div>
+          <p id="logs-status" class="muted" role="status" aria-live="polite">准备加载…</p>
+          <div id="logs-error" class="notice error hidden" role="alert"></div>
+          <div id="logs-scroll" class="logs-scroll" role="region" aria-label="最新请求日志，可滚动" tabindex="0"><div id="logs-entries"><p class="empty-state">正在加载日志…</p></div></div>
+        </div>
+        <div class="modal-footer"><span class="muted">时间为本地时间 · 切至后台或关闭后暂停刷新</span><button onclick="closeLogsModal()">关闭</button></div>
+      </div>
+    </div>
     <div
       id="token-modal"
       role="dialog"

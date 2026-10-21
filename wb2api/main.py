@@ -11,7 +11,7 @@ import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import Depends, FastAPI, Request
+from fastapi import Depends, FastAPI, Request, Query
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -336,6 +336,12 @@ def create_app(overrides: dict | None = None) -> FastAPI:
         return {'version': VERSION, 'accounts': app.state.store.list_accounts(),
                 'protocol_configured': configured(protocol), 'base_url': config['base_url'],
                 'request_timeout': config['request_timeout']}
+
+    @app.get('/admin/api/logs', dependencies=[Depends(admin)])
+    async def request_logs(limit: int = Query(default=200, ge=1, le=200),
+                           request_id: str = Query(default='', max_length=36, pattern=r'^[0-9a-fA-F-]*$'),
+                           errors_only: bool = False):
+        return app.state.request_logger.snapshot(limit, request_id, errors_only)
 
     @app.get('/admin/api/protocol', dependencies=[Depends(admin)])
     async def get_protocol():
