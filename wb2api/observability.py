@@ -13,7 +13,8 @@ import uuid
 
 _STATIC_PATHS = frozenset({
     '/', '/healthz', '/docs', '/redoc', '/openapi.json', '/v1/models',
-    '/v1/chat/completions', '/v1/images/generations', '/admin/api/status',
+    '/v1/chat/completions', '/v1/images/generations', '/v1/videos/generations',
+    '/v1/responses', '/v1/messages', '/admin/api/status',
     '/admin/api/protocol', '/admin/api/accounts', '/admin/api/accounts/export',
     '/admin/api/keys', '/admin/api/auth/send-code', '/admin/api/auth/check-code',
     '/admin/api/auth/google-verify', '/admin/api/auth/mailbox-verify',
@@ -21,6 +22,7 @@ _STATIC_PATHS = frozenset({
 })
 _METHODS = frozenset({'GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS', 'CONNECT', 'TRACE'})
 _DYNAMIC_PATHS = (
+    (re.compile(r'/v1/responses/[^/]+\Z'), '/v1/responses/{response_id}'),
     (re.compile(r'/admin/api/accounts/[^/]+/(reauth|check)\Z'), '/admin/api/accounts/{account_id}/'),
     (re.compile(r'/admin/api/accounts/[^/]+\Z'), '/admin/api/accounts/{account_id}'),
     (re.compile(r'/admin/api/keys/[^/]+\Z'), '/admin/api/keys/{key_id}'),

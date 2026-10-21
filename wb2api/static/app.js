@@ -1325,7 +1325,7 @@
       `curl '${origin}/v1/chat/completions' \\`,
       '  -H "Authorization: Bearer YOUR_API_KEY" \\',
       '  -H "Content-Type: application/json" \\',
-      `  -d '${JSON.stringify({ model: "wabi", messages: [{ role: "user", content: "你好！" }], stream: true })}'`,
+      `  -d '${JSON.stringify({ model: "gpt-6.1-sol", messages: [{ role: "user", content: "你好！" }], stream: true })}'`,
     ].join("\n");
     $("curl-box").textContent = cmd;
     if ($("label-base-url")) $("label-base-url").textContent = `${origin}/v1`;

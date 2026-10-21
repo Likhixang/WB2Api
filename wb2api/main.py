@@ -5,6 +5,7 @@ import base64
 import hmac
 import json
 import os
+import re
 import secrets
 import time
 import uuid
@@ -25,6 +26,8 @@ from .observability import RequestLogMiddleware
 from .streaming import with_heartbeats
 from .store import Store
 from .media import Media
+from .video import Video
+from .protocol_apis import install_protocol_apis
 from .wabi import UpstreamError, Wabi
 
 VERSION = '0.1.0'
@@ -139,12 +142,25 @@ class ToolCall(Input):
 
 class Message(Input):
     # Preserve prompt whitespace, unlike control-plane fields.
-    model_config = ConfigDict(extra='forbid', str_strip_whitespace=False)
+    model_config = ConfigDict(extra='allow', str_strip_whitespace=False)
     role: str = Field(pattern='^(system|developer|user|assistant|tool)$')
     name: str | None = Field(default=None, max_length=64)
     content: str | list[dict] | None = Field(default=None, max_length=200000)
-    tool_calls: list[ToolCall] | None = Field(default=None, min_length=1, max_length=64)
+    tool_calls: list[ToolCall] | None = Field(default=None, max_length=128)
     tool_call_id: str | None = Field(default=None, min_length=1, max_length=200)
+
+    @model_validator(mode='before')
+    @classmethod
+    def normalize_history(cls, value):
+        if isinstance(value, dict):
+            value = dict(value)
+            if value.get('tool_calls') == []:
+                value['tool_calls'] = None
+            elif isinstance(value.get('tool_calls'), list):
+                value['tool_calls'] = [
+                    {key: item for key, item in call.items() if key not in {'index', 'annotations', 'metadata'}}
+                    if isinstance(call, dict) else call for call in value['tool_calls']]
+        return value
 
     @model_validator(mode='after')
     def valid_shape(self):
@@ -164,12 +180,13 @@ class Message(Input):
 
 
 class Completion(Input):
+    model_config = ConfigDict(extra='allow', str_strip_whitespace=False)
     model: str = 'wabi'
     messages: list[Message] = Field(min_length=1, max_length=200)
     stream: bool = False
-    tools: list[dict] | None = Field(default=None, max_length=64)
+    tools: list[dict] | None = Field(default=None, max_length=128)
     tool_choice: str | dict | None = None
-    parallel_tool_calls: bool = True
+    parallel_tool_calls: bool | None = True
     reasoning_effort: ReasoningEffort | None = None
     # Client compatibility only: the upstream application exposes no sampling/budget controls.
     temperature: float | None = Field(default=None, ge=0, le=2)
@@ -190,6 +207,8 @@ class Completion(Input):
 
     @model_validator(mode='after')
     def client_shapes(self):
+        if self.parallel_tool_calls is None:
+            self.parallel_tool_calls = True
         if self.reasoning is not None:
             if set(self.reasoning) - {'effort'} or self.reasoning.get('effort') not in ('none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'):
                 raise ValueError('reasoning supports only a valid effort')
@@ -201,6 +220,19 @@ class Completion(Input):
         if self.stream_options is not None and (set(self.stream_options) - {'include_usage'} or ('include_usage' in self.stream_options and type(self.stream_options['include_usage']) is not bool)):
             raise ValueError('stream_options supports only boolean include_usage')
         return self
+
+    def ignored_parameters(self):
+        # Extra values are never serialized into the prompt. Header names must
+        # remain bounded ASCII tokens even when a client sends hostile keys.
+        def safe_name(value):
+            return value if len(value) <= 80 and value.isascii() and all(c.isalnum() or c in '_-.' for c in value) else 'unknown'
+        ignored = {safe_name(key) for key in (self.model_extra or {})}
+        ignored.update(key for key in ('temperature', 'top_p', 'max_tokens', 'max_completion_tokens',
+            'frequency_penalty', 'presence_penalty', 'seed', 'stream_options', 'stop', 'store', 'metadata', 'user')
+            if getattr(self, key) is not None)
+        for message in self.messages:
+            ignored.update('messages.' + safe_name(key) for key in (message.model_extra or {}))
+        return sorted(ignored)[:128]
 
 
 class ImageGeneration(Input):
@@ -234,6 +266,7 @@ def create_app(overrides: dict | None = None) -> FastAPI:
         'request_timeout': float(os.getenv('WABI_REQUEST_TIMEOUT', '120')),
         'log_max_bytes': int(os.getenv('WB2API_LOG_MAX_BYTES', '20971520')),
         'log_backups': int(os.getenv('WB2API_LOG_BACKUPS', '3')),
+        'video_timeout': float(os.getenv('WABI_VIDEO_TIMEOUT', '900')),
         'timezone': os.getenv('WABI_TIME_ZONE', 'Asia/Shanghai'),
         'app_version': '2.0.2', 'app_build': '1010',
     }
@@ -248,6 +281,7 @@ def create_app(overrides: dict | None = None) -> FastAPI:
         app.state.store = Store(config['data_dir'], config['encryption_key'])
         app.state.wabi = Wabi(app.state.store, config)
         app.state.media = Media(app.state.wabi)
+        app.state.video = Video(app.state.wabi, timeout=config['video_timeout'])
         app.state.logins = {}
         app.state.counter = 0
         app.state.login_lock = asyncio.Lock()
@@ -302,9 +336,43 @@ def create_app(overrides: dict | None = None) -> FastAPI:
 
     @app.exception_handler(RequestValidationError)
     async def validation_error(request, exc):
-        # Never echo raw validation input, which can contain passwords/tokens.
-        fields = ['.'.join(map(str, item['loc'])) for item in exc.errors()]
-        return error('Invalid or unsupported fields: ' + ', '.join(fields), 422, 'invalid_request')
+        # Never serialize input, arbitrary keys, ctx, or raw Pydantic messages.
+        known = {'body', 'query', 'path', 'str', 'list', 'dict', 'text', 'type'}
+        for model in (Completion, Message, ToolCall, CallFunction, AccountInput, ApiKeyInput, ApiKeyUpdate):
+            known.update(model.model_fields)
+        details = []
+        reasons = {
+            'Only text content parts are supported': ('unsupported_content', 'Only text content parts are supported'),
+            'Only text response_format is currently supported': ('unsupported_response_format', 'Only text response_format is supported'),
+            'reasoning supports only a valid effort': ('invalid_request', 'reasoning supports only a valid effort'),
+            'Conflicting reasoning effort fields': ('invalid_request', 'Conflicting reasoning effort fields'),
+            'stream_options supports only boolean include_usage': ('invalid_request', 'stream_options supports only boolean include_usage'),
+        }
+        code = 'invalid_request'
+        for item in exc.errors():
+            field = '.'.join(str(part) if isinstance(part, int) or part in known else 'field' for part in item['loc'])
+            reason = item['type']
+            context = item.get('ctx', {})
+            raw_reason = str(context.get('error', ''))
+            if raw_reason in reasons:
+                code, reason = reasons[raw_reason]
+            detail = {'field': field, 'type': item['type'], 'reason': reason}
+            for key in ('max_length', 'min_length', 'actual_length'):
+                if type(context.get(key)) is int:
+                    detail[key] = context[key]
+            details.append(detail)
+        request.state.gateway_error_code = 'invalid_request'
+        request.state.validation_fields = sorted({item['field'] for item in details})
+        request.state.validation_errors = [{'field': item['field'], 'type': item['type']} for item in details[:20]]
+        request.state.validation_error_count = len(details)
+        is_chat = request.url.path.rstrip('/') == '/v1/chat/completions'
+        if not is_chat:
+            return error('Invalid or unsupported fields: ' + ', '.join(request.state.validation_fields), 422, 'invalid_request')
+        message = '; '.join(item['field'] + ': ' + item['reason'] +
+            (' (maximum ' + str(item['max_length']) + ', received ' + str(item.get('actual_length', '?')) + ')' if 'max_length' in item else '')
+            for item in details[:20])
+        return JSONResponse({'error': {'message': message, 'type': 'invalid_request_error', 'code': code,
+            'param': details[0]['field'] if details else None, 'details': details[:20]}}, status_code=400)
 
     @app.exception_handler(UpstreamError)
     async def upstream_error(request, exc):
@@ -627,13 +695,12 @@ def create_app(overrides: dict | None = None) -> FastAPI:
         return {
             'object': 'list',
             'data': [
-                {'id': 'wabi', 'object': 'model', 'created': 0, 'owned_by': 'wabi',
+                {'id': 'gpt-6.1-sol', 'object': 'model', 'created': 0, 'owned_by': 'wb2api',
                  'capability': 'chat', 'capability_alias': True, 'available': True},
-                {'id': 'wabi-image', 'object': 'model', 'created': 0, 'owned_by': 'wabi',
+                {'id': 'gpt-image-2.5-flare', 'object': 'model', 'created': 0, 'owned_by': 'wb2api',
                  'capability': 'image', 'capability_alias': True, 'available': True},
-                {'id': 'wabi-video', 'object': 'model', 'created': 0, 'owned_by': 'wabi',
-                 'capability': 'video', 'capability_alias': True, 'available': False,
-                 'experimental': True, 'unavailable_reason': 'video_not_verified'},
+                {'id': 'wan-2.1', 'object': 'model', 'created': 0, 'owned_by': 'wb2api',
+                 'capability': 'video', 'capability_alias': True, 'available': True},
             ]
         }
 
@@ -646,53 +713,71 @@ def create_app(overrides: dict | None = None) -> FastAPI:
         return account['id']
 
     def video_unavailable():
-        return error('Video generation has not yet been verified through this adapter',
-                     501, 'video_not_verified')
+        return error('Use the video chat capability or /v1/videos/generations', 400, 'invalid_media_endpoint')
+
+    @app.post('/v1/videos/generations', dependencies=[Depends(inference)])
+    async def videos(body: ImageGeneration):
+        if body.model not in ('wabi-video', 'wan-2.1'):
+            return error('Video generation requires the video capability alias', 400, 'model_not_found')
+        urls = await app.state.video.generate_video(select_account(), body.prompt)
+        return {'created': int(time.time()), 'data': [{'url': url} for url in urls]}
 
     @app.post('/v1/images/generations', dependencies=[Depends(inference)])
     async def images(body: ImageGeneration):
         if body.model == 'wabi-video':
             return video_unavailable()
-        if body.model != 'wabi-image':
+        if body.model not in ('wabi-image', 'gpt-image-2.5-flare'):
             return error('Image generation requires the wabi-image capability alias', 400, 'model_not_found')
         urls = await app.state.media.generate_image(select_account(), body.prompt)
         return {'created': int(time.time()), 'data': [{'url': url} for url in urls]}
 
     @app.post('/v1/chat/completions', dependencies=[Depends(inference)])
     async def completion(body: Completion, request: Request):
-        if body.model == 'wabi-video':
-            return video_unavailable()
-        if body.model == 'wabi-image':
+        if body.model in ('wabi-video', 'wan-2.1', 'wabi-image', 'gpt-image-2.5-flare'):
+            is_video = body.model in ('wabi-video', 'wan-2.1')
             if body.reasoning_effort is not None:
                 return error('Prompt effort control is supported for text chat only', 400, 'unsupported_media_reasoning')
-            if (body.tools is not None or body.tool_choice is not None
-                    or 'parallel_tool_calls' in body.model_fields_set
+            if (body.tools or body.tool_choice not in (None, 'none')
                     or any(message.role == 'tool' or message.tool_calls for message in body.messages)):
-                return error('Image generation cannot be combined with client tools', 400, 'unsupported_media_tools')
+                return error('Media generation cannot be combined with client tools', 400, 'unsupported_media_tools')
             prompt = ToolAdapter().history_prompt(body.messages)
             if len(prompt) > 200000:
                 return error('Combined prompt exceeds 200000 characters', 413, 'body_too_large')
-            urls = await app.state.media.generate_image(select_account(), prompt)
-            content = '\n'.join('![Generated image](<' + url + '>)' for url in urls)
+            account_id = select_account()
             identity, created = 'chatcmpl-' + uuid.uuid4().hex, int(time.time())
+
+            async def generate_content():
+                urls = await (app.state.video.generate_video(account_id, prompt) if is_video
+                              else app.state.media.generate_image(account_id, prompt))
+                return '\n'.join(('[Generated video](<' if is_video else '![Generated image](<') + url + '>)' for url in urls)
+
             if not body.stream:
-                return {'id': identity, 'object': 'chat.completion', 'created': created, 'model': 'wabi-image',
+                content = await generate_content()
+                return {'id': identity, 'object': 'chat.completion', 'created': created, 'model': body.model,
                         'choices': [{'index': 0, 'message': {'role': 'assistant', 'content': content}, 'finish_reason': 'stop'}]}
 
             async def media_events():
-                for delta, finish in [({'role': 'assistant'}, None), ({'content': content}, None), ({}, 'stop')]:
-                    chunk = {'id': identity, 'object': 'chat.completion.chunk', 'created': created, 'model': 'wabi-image',
+                def frame(delta, finish=None):
+                    value = {'id': identity, 'object': 'chat.completion.chunk', 'created': created, 'model': body.model,
                              'choices': [{'index': 0, 'delta': delta, 'finish_reason': finish}]}
-                    yield 'data: ' + json.dumps(chunk, ensure_ascii=False) + '\n\n'
-                yield 'data: [DONE]\n\n'
-            return StreamingResponse(media_events(), media_type='text/event-stream', headers={
+                    return 'data: ' + json.dumps(value, ensure_ascii=False) + '\n\n'
+                try:
+                    yield frame({'role': 'assistant'})
+                    content = await generate_content()
+                    yield frame({'content': content})
+                    yield frame({}, 'stop')
+                    yield 'data: [DONE]\n\n'
+                except UpstreamError as exc:
+                    request.state.gateway_error_code = exc.code
+                    yield 'data: ' + json.dumps({'error': {'message': str(exc), 'code': exc.code, 'type': 'upstream_error'}}) + '\n\n'
+            return StreamingResponse(with_heartbeats(media_events()), media_type='text/event-stream', headers={
                 'X-Accel-Buffering': 'no', 'Cache-Control': 'no-cache', 'X-WB2Api-Media-Stream': 'buffered'})
-        if body.model not in ('wabi', 'default', 'sabi'):
-            return error('Model not supported; use wabi, wabi-image or wabi-video (unavailable)', 400, 'model_not_found')
+        if body.model not in ('wabi', 'default', 'sabi', 'gpt-6.1-sol'):
+            return error('Model not supported; use gpt-6.1-sol, gpt-image-2.5-flare or wan-2.1', 400, 'model_not_found')
         adapter = ToolAdapter(body.tools, body.tool_choice, body.parallel_tool_calls)
         prompt = GATEWAY_PROMPT + effort_hint(body.reasoning_effort) + adapter.history_prompt(body.messages)
         reasoning_headers = {'X-WB2Api-Reasoning-Mode': 'prompt', 'X-WB2Api-Reasoning-Effort': body.reasoning_effort} if body.reasoning_effort is not None else {}
-        ignored = sorted(field for field in ('temperature', 'top_p', 'max_tokens', 'max_completion_tokens', 'frequency_penalty', 'presence_penalty', 'seed', 'stream_options', 'stop', 'store', 'metadata') if getattr(body, field) is not None)
+        ignored = body.ignored_parameters()
         if ignored:
             reasoning_headers['X-WB2Api-Ignored-Parameters'] = ','.join(ignored)
         tool_mode = bool(body.tools) or body.tool_choice is not None or any(
@@ -717,7 +802,7 @@ def create_app(overrides: dict | None = None) -> FastAPI:
 
         def chunk(delta: dict, finish=None):
             return {'id': completion_id, 'object': 'chat.completion.chunk', 'created': created,
-                    'model': 'wabi', 'choices': [{'index': 0, 'delta': delta, 'finish_reason': finish}]}
+                    'model': body.model, 'choices': [{'index': 0, 'delta': delta, 'finish_reason': finish}]}
 
         async def collect_message():
             content = ''.join([text async for text in iterator])
@@ -731,7 +816,7 @@ def create_app(overrides: dict | None = None) -> FastAPI:
         if not body.stream:
             try:
                 message, finish = await collect_message()
-                return JSONResponse({'id': completion_id, 'object': 'chat.completion', 'created': created, 'model': 'wabi',
+                return JSONResponse({'id': completion_id, 'object': 'chat.completion', 'created': created, 'model': body.model,
                         'choices': [{'index': 0, 'message': message, 'finish_reason': finish}]}, headers=reasoning_headers)
             finally:
                 await iterator.aclose()
@@ -770,6 +855,7 @@ def create_app(overrides: dict | None = None) -> FastAPI:
             headers['X-WB2Api-Tool-Stream'] = 'buffered'
         return StreamingResponse(with_heartbeats(events()), media_type='text/event-stream', headers=headers)
 
+    app.state.response_cache = install_protocol_apis(app, completion, Completion, inference)
     return app
 
 

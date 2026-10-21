@@ -407,7 +407,7 @@ class Wabi:
                 # may replay old messages, and client histories are supplied in full.
                 thread = await bounded(self._json(
                     "POST", self.base_url + "/api/v1/threads", headers=self._headers(account),
-                    json={"title": "WB2Api", "request_id": str(uuid.uuid4()), "kind": "group"},
+                    json={"title": "", "request_id": str(uuid.uuid4()), "kind": "group"},
                 ))
                 thread_id = (thread.get("thread") or {}).get("id") or (thread.get("state") or {}).get("thread_id") or thread.get("id")
                 if not isinstance(thread_id, str) or not thread_id:

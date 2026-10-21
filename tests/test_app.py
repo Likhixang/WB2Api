@@ -28,7 +28,7 @@ def test_health_static_and_auth_boundaries(client):
     assert client.get('/admin/api/status').status_code == 401
     assert client.get('/admin/api/status', headers=IH).status_code == 401
     assert client.get('/v1/models', headers=AH).status_code == 401
-    assert client.get('/v1/models', headers=IH).json()['data'][0]['id'] == 'wabi'
+    assert client.get('/v1/models', headers=IH).json()['data'][0]['id'] == 'gpt-6.1-sol'
 
 
 def test_account_encryption_and_no_secret_echo(client):
@@ -111,10 +111,15 @@ def test_openai_output_conversion_with_explicit_fixture(client, stream):
 
 
 def test_unsupported_parameters_are_not_silently_ignored(client):
+    client.app.state.store.add_account(label='fixture', refresh_token='fixture', firebase_api_key='fixture')
+    async def upstream(*args):
+        yield 'answer'
+    client.app.state.wabi.stream_chat = upstream
     response = client.post('/v1/chat/completions', headers=IH, json={
         'messages': [{'role': 'user', 'content': 'hello'}], 'unknown_client_field': 0.5,
     })
-    assert response.status_code == 422
+    assert response.status_code == 200
+    assert 'unknown_client_field' in response.headers['x-wb2api-ignored-parameters']
 
 
 def test_store_persists_and_reuses_device_id(tmp_path):

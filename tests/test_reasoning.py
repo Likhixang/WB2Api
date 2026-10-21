@@ -46,7 +46,7 @@ def test_omitted_effort_leaves_prompt_unchanged(session):
 @pytest.mark.parametrize('value', ['unsupported', 123, {}, ' HIGH '])
 def test_invalid_effort_rejected(session, value):
     r = session.post('/v1/chat/completions', headers=H, json={'messages': [{'role': 'user', 'content': 'question'}], 'reasoning_effort': value})
-    assert r.status_code == 422
+    assert r.status_code == 400
 
 
 def test_effort_with_tool_format_still_strict(session):
@@ -81,7 +81,7 @@ def test_standard_client_fields_accepted_with_disclosure(session, stream):
     assert r.status_code == 200
     assert r.headers['x-wb2api-reasoning-effort'] == 'max'
     assert set(r.headers['x-wb2api-ignored-parameters'].split(',')) == {
-        'temperature', 'top_p', 'max_tokens', 'max_completion_tokens',
+        'temperature', 'top_p', 'max_tokens', 'max_completion_tokens', 'user',
         'frequency_penalty', 'presence_penalty', 'seed', 'stream_options'}
     assert 'compatible' in r.text and 'reasoning_content' not in r.text
 
@@ -89,7 +89,7 @@ def test_standard_client_fields_accepted_with_disclosure(session, stream):
 @pytest.mark.parametrize('params', [{'temperature': 3}, {'top_p': -1}, {'max_tokens': 0}, {'n': 2}])
 def test_client_fields_invalid_still_rejected(session, params):
     r = session.post('/v1/chat/completions', headers=H, json={'messages': [{'role': 'user', 'content': 'question'}], **params})
-    assert r.status_code == 422
+    assert r.status_code == 400
 
 
 @pytest.mark.parametrize('stream', [False, True])
@@ -115,7 +115,7 @@ def test_byok_text_parts_store_and_null_history(session, stream):
 
 def test_nontext_parts_not_silently_dropped(session):
     r = session.post('/v1/chat/completions', headers=H, json={'messages': [{'role': 'user', 'content': [{'type': 'image_url', 'image_url': {'url': 'https://example.invalid/image'}}]}]})
-    assert r.status_code == 422
+    assert r.status_code == 400
 
 
 def test_brand_filter_split_points():

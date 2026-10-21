@@ -343,7 +343,7 @@
           <i data-lucide="plug-zap"></i>
           <div>
             <h2>连接你的客户端</h2>
-            <p class="muted">OpenAI 兼容接口 · 提示词兼容工具调用（非原生）</p>
+            <p class="muted">Chat Completions / Responses / Messages · 提示词兼容工具调用（非原生）</p>
           </div>
         </div>
         <div class="key-preview">
@@ -371,10 +371,10 @@
                 </button>
               </div>
             </div>
-            <div><label>能力入口</label><code>wabi · 对话 / 工具兼容<br />wabi-image · 图片生成<br />wabi-video · 视频（未验证，暂不可用）</code><p class="muted">reasoning_effort 可选：none / minimal / low / medium / high / xhigh / max；通过提示词引导思考强度，非原生 Token 预算。</p></div>
+            <div><label>模型别名</label><code>gpt-6.1-sol · 对话 / 客户端工具<br />gpt-image-2.5-flare · 图片生成<br />wan-2.1 · 视频生成</code><p class="muted">路由别名不证明上游基座型号；旧 wabi / wabi-image / wabi-video 仍兼容。三协议支持文本、流式及客户端工具结果续接，非完整原生功能。reasoning_effort 支持 none / minimal / low / medium / high / xhigh / max，仅引导提示词，不返回真实 reasoning_content；忽略参数见 X-WB2Api-Ignored-Parameters 响应头。</p></div>
             <div>
               <label>支持接口</label
-              ><code>/v1/chat/completions<br />/v1/images/generations<br />/v1/models</code>
+              ><code>/v1/chat/completions<br />/v1/responses<br />/v1/messages<br />/v1/images/generations<br />/v1/videos/generations<br />/v1/models</code><p class="muted">视频 JSON 扩展返回 created / data[].url，不是 OpenAI 官方 Videos 任务 API。独立超时 WABI_VIDEO_TIMEOUT 默认 900 秒；长请求建议使用 wan-2.1 流式对话（stream: true，每 10 秒心跳），避免非流式代理超时（如 524）。</p>
             </div>
           </div>
           <div class="code-heading">

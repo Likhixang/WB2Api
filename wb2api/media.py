@@ -237,7 +237,7 @@ class Media:
                     if terminal.done():
                         raise terminal.result()
                     created = await w._json('POST', w.base_url + '/api/v1/threads', headers=w._headers(account),
-                                            json={'title': 'WB2Api media', 'request_id': str(uuid.uuid4()), 'kind': 'group'})
+                                            json={'title': '', 'request_id': str(uuid.uuid4()), 'kind': 'group'})
                     thread = created.get('thread')
                     thread_id = thread.get('id') if isinstance(thread, dict) else None
                     if not isinstance(thread_id, str) or not thread_id:

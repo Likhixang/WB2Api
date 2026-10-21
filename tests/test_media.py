@@ -235,7 +235,7 @@ def test_full_verified_media_flow_and_no_retries_or_downloads():
     assert result == [URL]
     assert len(transport.posts) == 2
     thread, message = transport.posts
-    assert thread[1]['title'] == 'WB2Api media' and thread[1]['kind'] == 'group'
+    assert thread[1]['title'] == '' and thread[1]['kind'] == 'group'
     assert message[1]['attachment_ids'] == [] and message[1]['source'] == 'typed'
     assert message[1]['page_context'] == {'app_surface': 'chat_only'}
     assert 'a red paper boat' in message[1]['blocks'][0]['text']
@@ -336,13 +336,15 @@ def client(tmp_path):
 
 def test_three_aliases_and_explicit_unavailable_video(client):
     models = client.get('/v1/models', headers=IH).json()['data']
-    assert [m['id'] for m in models] == ['wabi', 'wabi-image', 'wabi-video']
-    assert all(m['capability_alias'] for m in models)
-    assert models[-1]['available'] is False and models[-1]['experimental'] is True
-    for path, body in [('/v1/chat/completions', {'model': 'wabi-video', 'messages': [{'role': 'user', 'content': 'boat'}]}),
-                       ('/v1/images/generations', {'model': 'wabi-video', 'prompt': 'boat'})]:
-        response = client.post(path, headers=IH, json=body)
-        assert response.status_code == 501 and response.json()['error']['code'] == 'video_not_verified'
+    assert [m['id'] for m in models] == ['gpt-6.1-sol', 'gpt-image-2.5-flare', 'wan-2.1']
+    assert all(m['capability_alias'] and m['available'] for m in models)
+    async def video(*args):
+        return ['https://d34c7q5wjf4spy.cloudfront.net/fixture/video.mp4']
+    client.app.state.video.generate_video = video
+    response = client.post('/v1/chat/completions', headers=IH, json={'model': 'wan-2.1', 'messages': [{'role': 'user', 'content': 'boat'}]})
+    assert response.status_code == 200 and 'video.mp4' in response.json()['choices'][0]['message']['content']
+    response = client.post('/v1/images/generations', headers=IH, json={'model': 'wabi-video', 'prompt': 'boat'})
+    assert response.status_code == 400 and response.json()['error']['code'] == 'invalid_media_endpoint'
 
 
 def test_images_inference_auth_and_openai_url_shape(client):
@@ -397,10 +399,10 @@ def test_image_chat_returns_only_verified_artifact_and_buffered_stream(client, s
 
 
 @pytest.mark.parametrize('extra', [{'tools': []}, {'tool_choice': 'none'}, {'parallel_tool_calls': False}])
-def test_media_tools_explicitly_rejected(client, extra):
+def test_media_empty_tool_controls_are_compatible(client, extra):
     response = client.post('/v1/chat/completions', headers=IH, json={
         'model': 'wabi-image', 'messages': [{'role': 'user', 'content': 'boat'}], **extra})
-    assert response.status_code == 400 and response.json()['error']['code'] == 'unsupported_media_tools'
+    assert response.status_code == 200 and URL in response.text
 
 
 @pytest.mark.parametrize('stream', [False, True])
@@ -410,7 +412,12 @@ def test_image_chat_failure_is_http_json_not_fake_success_stream(client, stream)
     client.app.state.media.generate_image = refusal
     response = client.post('/v1/chat/completions', headers=IH, json={
         'model': 'wabi-image', 'messages': [{'role': 'user', 'content': 'boat'}], 'stream': stream})
-    assert response.status_code == 502
-    assert response.headers['content-type'] == 'application/json'
-    assert response.json()['error']['code'] == 'image_not_generated'
+    if stream:
+        assert response.status_code == 200
+        frames = [json.loads(line[6:]) for line in response.text.splitlines() if line.startswith('data: ')]
+        assert frames[-1]['error']['code'] == 'image_not_generated'
+    else:
+        assert response.status_code == 502
+        assert response.headers['content-type'] == 'application/json'
+        assert response.json()['error']['code'] == 'image_not_generated'
     assert '[DONE]' not in response.text

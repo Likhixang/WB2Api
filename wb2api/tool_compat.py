@@ -101,16 +101,16 @@ def _parse_call_xml(inner):
 
 class ToolAdapter:
     def __init__(self, tools=None, choice=None, parallel=True):
-        self.tools = tools or []
+        self.tools = [] if tools is None else tools
         self.validators = {}
         self.choice = choice if choice is not None else ('auto' if self.tools else 'none')
-        self.parallel = parallel
+        self.parallel = True if parallel is None else parallel
         self.forced = None
         self.start = '<Function_' + secrets.token_hex(16) + '_Start/>'
         self.end = self.start.replace('_Start/>', '_End/>')
         try:
-            if not isinstance(self.tools, list) or len(self.tools) > 64:
-                raise ValueError('At most 64 tools are supported')
+            if not isinstance(self.tools, list) or len(self.tools) > 128:
+                raise ValueError('At most 128 tools are supported')
             for tool in self.tools:
                 if not isinstance(tool, dict) or set(tool) != {'type', 'function'} or tool['type'] != 'function':
                     raise ValueError('Only function tools are supported')
@@ -267,7 +267,7 @@ class ToolAdapter:
                 arguments = self.validate_arguments(name, args_node.text or '')
                 calls.append({'id': 'call_' + uuid.uuid4().hex, 'type': 'function',
                               'function': {'name': name, 'arguments': arguments}})
-            if not calls or len(calls) > 64 or ((not self.parallel or self.forced) and len(calls) != 1):
+            if not calls or len(calls) > 128 or ((not self.parallel or self.forced) and len(calls) != 1):
                 raise ValueError('Invalid function call count')
             return {'role': 'assistant', 'content': None, 'tool_calls': calls}, 'tool_calls'
         except (ValueError, ET.ParseError, RecursionError) as exc:
