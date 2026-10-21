@@ -165,148 +165,216 @@
     </div>
 
     <!-- Quick Setup & Add Account Grid -->
-    <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6 sm:gap-8">
       
       <!-- Add Account Wizard Card (1 Col) -->
-      <div class="bg-white dark:bg-slate-900/80 border border-slate-200 dark:border-slate-800 rounded-2xl p-6 shadow-sm flex flex-col justify-between">
+      <div class="bg-white dark:bg-slate-900/80 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 sm:p-6 shadow-sm flex flex-col justify-between">
         <div>
           <div class="flex items-center justify-between mb-4">
             <h2 class="text-base font-semibold text-slate-900 dark:text-white flex items-center gap-2">
               <i data-lucide="user-plus" class="w-4 h-4 text-sky-400"></i>
-              添加与登录账号
+              <span>添加与登录账号</span>
             </h2>
-            <div class="flex items-center space-x-1 p-0.5 bg-slate-100 dark:bg-slate-800 rounded-lg text-xs">
-              <button onclick="switchLoginTab('phone')" id="tab-phone" class="px-2.5 py-1 rounded-md bg-white dark:bg-slate-700 font-medium shadow-sm transition">手机登录</button>
-              <button onclick="switchLoginTab('token')" id="tab-token" class="px-2.5 py-1 rounded-md text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200 transition">导入凭据</button>
-            </div>
+            <span class="text-xs text-slate-500 dark:text-slate-400 bg-slate-100 dark:bg-slate-800 px-2.5 py-0.5 rounded-full font-medium">短信 / 邮箱双步验证</span>
           </div>
-          <p class="text-xs text-slate-500 dark:text-slate-400 mb-6 leading-relaxed">
-            支持手机短信验证与 Google 二次授权验证。Firebase Key 已自动内置，无需手动填写。
+          <p class="text-xs text-slate-500 dark:text-slate-400 mb-5 leading-relaxed">
+            输入手机号获取短信验证码。若 Wabi 要求邮箱二次验证，系统将自动发起邮箱验证码校验直接激活入库。
           </p>
 
-          <!-- Tab 1: Phone Login -->
-          <div id="pane-phone" class="space-y-4">
+          <!-- Step 1 & 2: Phone & SMS -->
+          <div class="space-y-3.5">
             <div>
-              <label class="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1.5">手机号码 (含国际区号)</label>
+              <label for="sms-phone" class="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1.5">手机号码 (含国际区号)</label>
               <div class="flex space-x-2">
-                <input type="tel" id="sms-phone" placeholder="+8613800000000" class="flex-1 bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-xl px-3.5 py-2.5 text-sm text-slate-900 dark:text-slate-100 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-sky-500/50" />
-                <button onclick="handleSendSms()" id="btn-send-sms" class="px-4 py-2.5 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-xs font-medium transition shrink-0">
-                  发送验证码
+                <input type="tel" id="sms-phone" placeholder="+8613800000000" class="flex-1 min-w-0 bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-xl px-3.5 py-2.5 text-sm text-slate-900 dark:text-slate-100 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-sky-500/50" />
+                <button onclick="handleSendSms()" id="btn-send-sms" class="px-3.5 py-2.5 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-xs font-medium text-slate-700 dark:text-slate-200 transition shrink-0">
+                  获取验证码
                 </button>
               </div>
             </div>
             <div>
-              <label class="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1.5">短信验证码</label>
-              <input type="text" id="sms-code" placeholder="6 位验证码" class="w-full bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-xl px-3.5 py-2.5 text-sm text-slate-900 dark:text-slate-100 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-sky-500/50" />
+              <label for="sms-code" class="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1.5">短信验证码</label>
+              <input type="text" id="sms-code" inputmode="numeric" placeholder="6 位短信验证码" class="w-full bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-xl px-3.5 py-2.5 text-sm text-slate-900 dark:text-slate-100 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-sky-500/50" />
             </div>
             <div>
-              <label class="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1.5">账号标签名称</label>
+              <label for="sms-label" class="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1.5">账号标签名称</label>
               <input type="text" id="sms-label" placeholder="例如：主手机号" class="w-full bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-xl px-3.5 py-2.5 text-sm text-slate-900 dark:text-slate-100 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-sky-500/50" />
             </div>
             <button onclick="handleVerifySms()" id="btn-verify-sms" class="w-full bg-sky-600 hover:bg-sky-500 text-white font-medium text-sm py-2.5 px-4 rounded-xl flex items-center justify-center space-x-2 transition shadow-lg shadow-sky-600/20 disabled:opacity-50">
               <i data-lucide="check" class="w-4 h-4"></i>
-              <span>验证并导入</span>
+              <span>验证并存入号池</span>
             </button>
 
-            <!-- Google OAuth Secondary Challenge Section -->
+            <!-- Mailbox Challenge Box (Shown when mailbox_code_required) -->
+            <div id="mailbox-challenge-box" class="hidden p-4 rounded-xl bg-violet-50 dark:bg-violet-950/30 border border-violet-200 dark:border-violet-800/40 space-y-3">
+              <div class="flex items-center justify-between text-xs font-semibold text-violet-700 dark:text-violet-300">
+                <div class="flex items-center space-x-1.5">
+                  <i data-lucide="mail-check" class="w-4 h-4"></i>
+                  <span>需要邮箱二次验证</span>
+                </div>
+                <span id="mailbox-timer" class="font-mono text-[11px] text-violet-500"></span>
+              </div>
+              <p id="mailbox-hint-text" class="text-xs text-violet-600 dark:text-violet-300 leading-relaxed">
+                验证码已发送至绑定邮箱，请查收：
+              </p>
+              <div>
+                <input type="text" id="mailbox-code-input" inputmode="numeric" placeholder="6 位邮箱验证码" class="w-full text-center tracking-widest text-lg font-mono bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-800 rounded-xl px-3.5 py-2 text-slate-900 dark:text-slate-100 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-violet-500/50" />
+              </div>
+              <div class="flex space-x-2">
+                <button onclick="handleVerifyMailbox()" id="btn-submit-mailbox" class="flex-1 py-2 px-3 rounded-xl bg-violet-600 hover:bg-violet-500 text-white text-xs font-medium transition shadow-sm">
+                  完成验证并激活
+                </button>
+                <button onclick="handleResendMailbox()" id="btn-resend-mailbox" class="py-2 px-3 rounded-xl border border-violet-300 dark:border-violet-800 hover:bg-violet-100 dark:hover:bg-violet-900/40 text-violet-700 dark:text-violet-300 text-xs font-medium transition">
+                  重发
+                </button>
+              </div>
+            </div>
+
+            <!-- Google OAuth Challenge Box (Fallback for Google accounts) -->
             <div id="google-challenge-box" class="hidden p-4 rounded-xl bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800/40 space-y-3">
               <div class="flex items-center space-x-2 text-xs font-semibold text-amber-700 dark:text-amber-400">
                 <i data-lucide="shield-alert" class="w-4 h-4"></i>
-                <span>触发 Google 二次验证</span>
+                <span>触发 Google 授权验证</span>
               </div>
               <p class="text-xs text-amber-600 dark:text-amber-300 leading-relaxed">
-                Wabi 要求此手机号完成 Google 授权激活：
+                此账号要求完成 Google 授权：
               </p>
               <a id="btn-google-auth-link" href="#" target="_blank" class="w-full py-2 px-3 rounded-lg bg-amber-600 hover:bg-amber-500 text-white text-xs font-medium flex items-center justify-center space-x-1.5 transition shadow-sm">
                 <i data-lucide="external-link" class="w-3.5 h-3.5"></i>
-                <span>第 1 步：打开 Google 授权页面 ↗</span>
+                <span>打开 Google 授权页面 ↗</span>
               </a>
               <div class="space-y-1.5">
-                <label class="text-[11px] font-medium text-slate-600 dark:text-slate-400">第 2 步：粘贴授权跳转后的完整网址 (或 code)</label>
-                <input type="text" id="google-code-input" placeholder="粘贴浏览器地址栏的完整跳转网址" class="w-full text-xs bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-800 rounded-lg p-2 text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-amber-500/50" />
+                <label class="text-[11px] font-medium text-slate-600 dark:text-slate-400">粘贴跳转网址 (含 code)</label>
+                <input type="text" id="google-code-input" placeholder="粘贴完整跳转网址" class="w-full text-xs bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-800 rounded-lg p-2 text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-amber-500/50" />
               </div>
               <button onclick="handleCompleteGoogleVerify()" id="btn-submit-google" class="w-full py-2 px-3 rounded-lg bg-sky-600 hover:bg-sky-500 text-white text-xs font-medium transition shadow-sm">
-                第 3 步：完成验证并激活入库
+                完成 Google 验证入库
               </button>
             </div>
           </div>
 
-          <!-- Tab 2: Manual Token Import -->
-          <div id="pane-token" class="space-y-4 hidden">
-            <div>
-              <label class="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1.5">账号标签名称</label>
-              <input type="text" id="import-label" placeholder="例如：抓包提取账号" class="w-full bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-xl px-3.5 py-2.5 text-sm text-slate-900 dark:text-slate-100 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-sky-500/50" />
+          <!-- Alert / Status Text -->
+          <div id="form-msg" role="status" class="mt-4 text-xs hidden rounded-lg p-2.5"></div>
+
+          <!-- API Keys Quick Box (Liber2Api Alignment) -->
+          <div class="mt-5 pt-4 border-t border-slate-200 dark:border-slate-800/60">
+            <div class="bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800/80 rounded-xl p-3 flex flex-col justify-between">
+              <div class="flex items-center justify-between mb-1.5">
+                <span class="text-slate-600 dark:text-slate-300 font-medium flex items-center gap-1.5 text-xs">
+                  <i data-lucide="key" class="w-3.5 h-3.5 text-amber-500"></i>
+                  <span>API Keys (密钥管理)</span>
+                </span>
+                <button onclick="openTokenModal()" class="text-[11px] text-sky-600 dark:text-sky-400 hover:underline flex items-center gap-1 font-sans">
+                  <span>管理密钥</span>
+                </button>
+              </div>
+              <div class="flex items-center justify-between font-mono text-xs text-slate-800 dark:text-slate-200 bg-white dark:bg-slate-900 px-2.5 py-1.5 rounded border border-slate-200 dark:border-slate-800">
+                <span id="api-key-text" class="truncate font-mono">加载中...</span>
+                <div class="flex items-center space-x-1 shrink-0 ml-1">
+                  <button onclick="copyCurrentApiKey()" class="text-slate-400 hover:text-slate-700 dark:hover:text-white transition p-0.5 rounded" title="复制可用 API Key">
+                    <i data-lucide="copy" class="w-3.5 h-3.5"></i>
+                  </button>
+                </div>
+              </div>
+              <p class="mt-1.5 text-[10px] text-slate-400 dark:text-slate-500 leading-normal">
+                客户端通过 Bearer Key 请求 /v1 接口，支持多客户端独立命名与启停。
+              </p>
             </div>
-            <div>
-              <label class="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1.5">Firebase Refresh Token</label>
-              <textarea id="import-rt" rows="3" placeholder="粘贴抓取到的长期有效 Refresh Token" class="w-full font-mono text-xs bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-xl p-2.5 text-slate-900 dark:text-slate-100 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-sky-500/50"></textarea>
-            </div>
-            <div>
-              <label class="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1.5">ID Token (选填，留空自动刷新)</label>
-              <input type="password" id="import-id-token" placeholder="选填，初始 1 小时临时票据" class="w-full font-mono text-xs bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-xl px-3.5 py-2 text-slate-900 dark:text-slate-100 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-sky-500/50" />
-            </div>
-            <button onclick="handleManualImport()" id="btn-manual-import" class="w-full bg-sky-600 hover:bg-sky-500 text-white font-medium text-sm py-2.5 px-4 rounded-xl flex items-center justify-center space-x-2 transition shadow-lg shadow-sky-600/20 disabled:opacity-50">
-              <i data-lucide="plus-circle" class="w-4 h-4"></i>
-              <span>导入账号凭证</span>
+          </div>
+
+          <!-- Advanced: Collapsible Manual Import -->
+          <div class="mt-4">
+            <button onclick="toggleManualImport()" type="button" class="text-[11px] text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-300 flex items-center gap-1 transition">
+              <i data-lucide="chevron-right" id="manual-import-icon" class="w-3 h-3 transition-transform"></i>
+              <span>高级：手动导入 Refresh Token</span>
             </button>
+            <div id="pane-token" class="hidden mt-3 space-y-3 pt-3 border-t border-slate-200 dark:border-slate-800/60">
+              <div>
+                <label for="import-label" class="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1">账号标签</label>
+                <input type="text" id="import-label" placeholder="例如：抓包导入账号" class="w-full bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-900 dark:text-slate-100 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-sky-500/50" />
+              </div>
+              <div>
+                <label for="import-rt" class="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1">Firebase Refresh Token</label>
+                <textarea id="import-rt" rows="2" placeholder="粘贴抓取到的长期有效 Refresh Token" class="w-full font-mono text-xs bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-xl p-2.5 text-slate-900 dark:text-slate-100 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-sky-500/50"></textarea>
+              </div>
+              <button onclick="handleManualImport()" id="btn-manual-import" class="w-full bg-slate-800 hover:bg-slate-700 dark:bg-slate-700 dark:hover:bg-slate-600 text-white font-medium text-xs py-2 px-3 rounded-xl transition">
+                导入该凭证
+              </button>
+            </div>
           </div>
         </div>
 
-        <div id="form-msg" class="text-xs text-center hidden rounded-lg p-2.5 mt-4"></div>
+        <div class="mt-5 pt-3 border-t border-slate-200 dark:border-slate-800/60 text-[11px] text-slate-400 dark:text-slate-500 flex items-center gap-1.5">
+          <i data-lucide="shield-check" class="w-3.5 h-3.5 text-emerald-500 dark:text-emerald-400"></i>
+          <span>凭据在本地 SQLite Fernet 高强度加密存储</span>
+        </div>
       </div>
 
       <!-- Quick Access & Configuration Card (2 Cols) -->
-      <div class="lg:col-span-2 bg-white dark:bg-slate-900/80 border border-slate-200 dark:border-slate-800 rounded-2xl p-6 shadow-sm flex flex-col justify-between">
+      <div class="lg:col-span-2 bg-white dark:bg-slate-900/80 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 sm:p-6 shadow-sm flex flex-col justify-between">
         <div>
           <div class="flex items-center justify-between mb-4">
             <h2 class="text-base font-semibold text-slate-900 dark:text-white flex items-center gap-2">
               <i data-lucide="terminal" class="w-4 h-4 text-emerald-400"></i>
-              OpenAI 兼容接口接入指引
+              <span>第三方接入指引 (OpenAI 协议)</span>
             </h2>
-            <button onclick="openTokenModal()" class="flex items-center space-x-1.5 px-3 py-1.5 text-xs font-medium rounded-lg bg-sky-50 dark:bg-sky-950/50 hover:bg-sky-100 dark:hover:bg-sky-900/50 text-sky-600 dark:text-sky-400 border border-sky-200 dark:border-sky-800/40 transition">
-              <i data-lucide="key" class="w-3.5 h-3.5"></i>
-              <span>管理下游密钥 (API Keys)</span>
-            </button>
+            <span class="text-xs text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800/40 px-2 py-0.5 rounded-full font-medium">Stream 流式支持</span>
           </div>
 
-          <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-4">
-            <div class="p-3 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800">
-              <div class="text-[11px] text-slate-400 mb-1">Base URL</div>
-              <div class="font-mono text-xs font-semibold text-slate-800 dark:text-slate-200 truncate flex items-center justify-between">
-                <span id="label-base-url">/v1</span>
-                <button onclick="copyBaseUrl()" class="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"><i data-lucide="copy" class="w-3.5 h-3.5"></i></button>
+          <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 text-xs mb-4">
+            <div class="bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800/80 rounded-xl p-3 flex flex-col justify-between">
+              <div class="text-slate-500 dark:text-slate-400 font-medium mb-1 flex items-center gap-1.5">
+                <i data-lucide="link" class="w-3.5 h-3.5 text-sky-500"></i>
+                <span>Base URL (基础接口地址)</span>
+              </div>
+              <div class="flex items-center justify-between font-mono text-sky-600 dark:text-sky-400 bg-white dark:bg-slate-900 px-2.5 py-1.5 rounded border border-slate-200 dark:border-slate-800">
+                <span id="label-base-url" class="truncate font-mono">/v1</span>
+                <button onclick="copyBaseUrl()" class="text-slate-400 hover:text-slate-700 dark:hover:text-white transition p-0.5 rounded" title="复制 Base URL">
+                  <i data-lucide="copy" class="w-3.5 h-3.5"></i>
+                </button>
               </div>
             </div>
-            <div class="p-3 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800">
-              <div class="text-[11px] text-slate-400 mb-1">模型名称 (Model)</div>
-              <div class="font-mono text-xs font-semibold text-slate-800 dark:text-slate-200 flex items-center justify-between">
+            <div class="bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800/80 rounded-xl p-3 flex flex-col justify-between">
+              <div class="text-slate-500 dark:text-slate-400 font-medium mb-1 flex items-center gap-1.5">
+                <i data-lucide="cpu" class="w-3.5 h-3.5 text-indigo-500"></i>
+                <span>模型名称 (Model)</span>
+              </div>
+              <div class="flex items-center justify-between font-mono text-slate-800 dark:text-slate-200 bg-white dark:bg-slate-900 px-2.5 py-1.5 rounded border border-slate-200 dark:border-slate-800">
                 <span>wabi</span>
                 <span class="text-[10px] text-slate-400">上游默认模型</span>
               </div>
             </div>
-            <div class="p-3 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800">
-              <div class="text-[11px] text-slate-400 mb-1">接口协议</div>
-              <div class="font-mono text-xs font-semibold text-slate-800 dark:text-slate-200 truncate flex items-center justify-between">
-                <span>OpenAI /v1/chat/completions</span>
+            <div class="bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800/80 rounded-xl p-3 flex flex-col justify-between sm:col-span-2 lg:col-span-1">
+              <div class="text-slate-500 dark:text-slate-400 font-medium mb-1 flex items-center gap-1.5">
+                <i data-lucide="sliders" class="w-3.5 h-3.5 text-emerald-500"></i>
+                <span>接口协议</span>
+              </div>
+              <div class="flex items-center justify-between font-mono text-slate-800 dark:text-slate-200 bg-white dark:bg-slate-900 px-2.5 py-1.5 rounded border border-slate-200 dark:border-slate-800">
+                <span class="truncate">/v1/chat/completions</span>
               </div>
             </div>
           </div>
 
-          <div class="relative rounded-xl overflow-hidden bg-slate-950 border border-slate-800">
-            <div class="flex items-center justify-between px-4 py-2 border-b border-slate-800 text-xs text-slate-400">
-              <span>cURL 流式调用测试</span>
-              <button onclick="copyCurlExample()" class="flex items-center space-x-1 text-sky-400 hover:text-sky-300">
+          <!-- Code Snippet -->
+          <div class="bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800/90 rounded-xl p-3.5 text-xs">
+            <div class="flex items-center justify-between text-slate-500 dark:text-slate-400 pb-2 mb-2 border-b border-slate-200 dark:border-slate-800/60 font-medium">
+              <span>cURL 请求示例 (流式对话)</span>
+              <button onclick="copyCurlExample()" class="hover:text-slate-900 dark:hover:text-slate-200 transition flex items-center gap-1 text-sky-500 dark:text-sky-400">
                 <i data-lucide="copy" class="w-3 h-3"></i>
                 <span>复制命令</span>
               </button>
             </div>
-            <pre class="p-4 text-xs font-mono text-emerald-400 overflow-x-auto leading-relaxed" id="curl-box"></pre>
+            <pre class="p-3 text-xs font-mono text-emerald-400 overflow-x-auto whitespace-pre leading-relaxed bg-slate-950 rounded-lg border border-slate-800" id="curl-box"></pre>
           </div>
         </div>
 
-        <div class="mt-4 pt-4 border-t border-slate-200 dark:border-slate-800 text-xs text-slate-500 dark:text-slate-400 flex items-center justify-between">
-          <span>支持任意标准 OpenAI 兼容客户端或分发网关直接接入。</span>
-          <button onclick="syncStatus()" class="flex items-center space-x-1 text-slate-500 hover:text-slate-800 dark:hover:text-slate-200">
+        <div class="mt-4 pt-4 border-t border-slate-200 dark:border-slate-800 text-xs text-slate-500 dark:text-slate-400 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+          <div class="flex flex-wrap items-center gap-1.5 text-[11px]">
+            <span class="text-slate-500 dark:text-slate-400 font-medium mr-1">支持接口:</span>
+            <span class="px-2 py-0.5 rounded bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800/40 font-mono font-medium">/v1/chat/completions</span>
+            <span class="px-2 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 font-mono font-medium">/v1/models</span>
+          </div>
+          <button onclick="syncStatus()" class="flex items-center space-x-1 text-slate-500 hover:text-slate-800 dark:hover:text-slate-200 self-end sm:self-auto">
             <i data-lucide="refresh-cw" class="w-3.5 h-3.5"></i>
             <span>刷新状态</span>
           </button>

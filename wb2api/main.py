@@ -82,6 +82,20 @@ class GoogleVerify(Input):
     account_id: str = Field(default='', max_length=100)
 
 
+class MailboxVerify(Input):
+    phone_number: str = Field(default='', max_length=50)
+    state: str = Field(default='', max_length=1000)
+    code: str = Field(min_length=1, max_length=50)
+    firebase_api_key: str = Field(default='', max_length=1024)
+    label: str = Field(default='', max_length=100)
+    account_id: str = Field(default='', max_length=100)
+
+
+class MailboxResend(Input):
+    phone_number: str = Field(default='', max_length=50)
+    state: str = Field(default='', max_length=1000)
+
+
 class ApiKeyInput(Input):
     name: str = Field(min_length=1, max_length=100)
     key: str = Field(default='', max_length=200)
@@ -287,9 +301,13 @@ def create_app(overrides: dict | None = None) -> FastAPI:
 
     @app.post('/admin/api/accounts/{account_id}/check', dependencies=[Depends(admin)])
     async def check(account_id: str):
-        profile = await app.state.wabi.validate_account(account_id)
-        # Only display a non-sensitive status; do not expose profile PII by default.
-        return {'ok': True, 'profile': {'authenticated': True}}
+        try:
+            profile = await app.state.wabi.validate_account(account_id)
+            return {'ok': True, 'profile': {'authenticated': True}}
+        except UpstreamError as exc:
+            return {'ok': False, 'status': exc.status, 'error': exc.message, 'code': exc.code}
+        except Exception as exc:
+            return {'ok': False, 'status': 500, 'error': str(exc), 'code': 'check_failed'}
 
     @app.post('/admin/api/auth/send-code', dependencies=[Depends(admin)])
     async def send_code(body: Phone):
@@ -319,6 +337,7 @@ def create_app(overrides: dict | None = None) -> FastAPI:
             if result.get('google_required'):
                 pending['google_state'] = result.get('google_state', '')
                 pending['label'] = body.label
+                pending['account_id'] = body.account_id
                 pending['firebase_api_key'] = body.firebase_api_key
                 return {
                     'ok': True,
@@ -327,18 +346,44 @@ def create_app(overrides: dict | None = None) -> FastAPI:
                     'google_state': result.get('google_state', ''),
                     'phone_number': body.phone_number,
                     'label': body.label,
+                    'account_id': body.account_id,
                 }
             if result.get('mailbox_code_required'):
-                return {'ok': False, 'requires_verification': True, 'details': {
-                    'mailbox_code_required': True,
-                    'message': 'Mailbox verification required',
-                }}
+                pending['mailbox_state'] = result.get('mailbox_state', '')
+                pending['label'] = body.label
+                pending['account_id'] = body.account_id
+                pending['firebase_api_key'] = body.firebase_api_key
+                return {
+                    'ok': True,
+                    'requires_mailbox': True,
+                    'mailbox_state': result.get('mailbox_state', ''),
+                    'mailbox_hint': result.get('mailbox_hint', ''),
+                    'retry_after_seconds': result.get('retry_after_seconds', 60),
+                    'phone_number': body.phone_number,
+                    'label': body.label,
+                    'account_id': body.account_id,
+                }
             token = result.get('firebase_custom_token')
             if not token:
                 raise UpstreamError('Upstream returned no custom token')
             firebase_key = body.firebase_api_key or DEFAULT_FIREBASE_API_KEY
             tokens = await app.state.wabi.exchange_custom(token, firebase_key)
-            account = app.state.store.add_account(label=body.label, firebase_api_key=firebase_key, **tokens)
+            if body.account_id:
+                account = app.state.store.update_account_credentials(
+                    body.account_id,
+                    id_token=tokens['id_token'],
+                    refresh_token=tokens['refresh_token'],
+                    expires_at=tokens['expires_at'],
+                    firebase_api_key=firebase_key,
+                    phone_number=body.phone_number
+                )
+            else:
+                account = app.state.store.add_account(
+                    label=body.label,
+                    firebase_api_key=firebase_key,
+                    phone_number=body.phone_number,
+                    **tokens
+                )
             app.state.logins.pop(body.phone_number, None)
             return {'ok': True, 'account': account}
 
@@ -373,10 +418,86 @@ def create_app(overrides: dict | None = None) -> FastAPI:
             firebase_key = body.firebase_api_key or pending.get('firebase_api_key') or DEFAULT_FIREBASE_API_KEY
             tokens = await app.state.wabi.exchange_custom(token, firebase_key)
             label = body.label or pending.get('label') or 'Google Phone Account'
-            account = app.state.store.add_account(label=label, firebase_api_key=firebase_key, **tokens)
+            account_id = body.account_id or pending.get('account_id')
+            if account_id:
+                account = app.state.store.update_account_credentials(
+                    account_id,
+                    id_token=tokens['id_token'],
+                    refresh_token=tokens['refresh_token'],
+                    expires_at=tokens['expires_at'],
+                    firebase_api_key=firebase_key,
+                    phone_number=body.phone_number
+                )
+            else:
+                account = app.state.store.add_account(
+                    label=label,
+                    firebase_api_key=firebase_key,
+                    phone_number=body.phone_number,
+                    **tokens
+                )
             if body.phone_number:
                 app.state.logins.pop(body.phone_number, None)
             return {'ok': True, 'account': account}
+
+    @app.post('/admin/api/auth/mailbox-verify', dependencies=[Depends(admin)])
+    async def mailbox_verify(body: MailboxVerify):
+        async with app.state.login_lock:
+            pending = None
+            if body.phone_number:
+                pending = app.state.logins.get(body.phone_number)
+            if not pending and body.state:
+                for v in app.state.logins.values():
+                    if v.get('mailbox_state') == body.state:
+                        pending = v
+                        break
+            if not pending or pending['expires'] < time.time():
+                raise HTTPException(400, 'Verification session expired; please request SMS code again')
+            code = body.code.strip()
+            state = body.state.strip() or pending.get('mailbox_state', '')
+            result = await app.state.wabi.mailbox_code(state, code, pending['verifier'])
+            token = result.get('firebase_custom_token')
+            if not token:
+                raise UpstreamError('Mailbox verification did not return a session token')
+            firebase_key = body.firebase_api_key or pending.get('firebase_api_key') or DEFAULT_FIREBASE_API_KEY
+            tokens = await app.state.wabi.exchange_custom(token, firebase_key)
+            label = body.label or pending.get('label') or 'Phone Account'
+            account_id = body.account_id or pending.get('account_id')
+            if account_id:
+                account = app.state.store.update_account_credentials(
+                    account_id,
+                    id_token=tokens['id_token'],
+                    refresh_token=tokens['refresh_token'],
+                    expires_at=tokens['expires_at'],
+                    firebase_api_key=firebase_key,
+                    phone_number=body.phone_number
+                )
+            else:
+                account = app.state.store.add_account(
+                    label=label,
+                    firebase_api_key=firebase_key,
+                    phone_number=body.phone_number,
+                    **tokens
+                )
+            if body.phone_number:
+                app.state.logins.pop(body.phone_number, None)
+            return {'ok': True, 'account': account}
+
+    @app.post('/admin/api/auth/mailbox-resend', dependencies=[Depends(admin)])
+    async def mailbox_resend(body: MailboxResend):
+        async with app.state.login_lock:
+            pending = None
+            if body.phone_number:
+                pending = app.state.logins.get(body.phone_number)
+            if not pending and body.state:
+                for v in app.state.logins.values():
+                    if v.get('mailbox_state') == body.state:
+                        pending = v
+                        break
+            if not pending or pending['expires'] < time.time():
+                raise HTTPException(400, 'Verification session expired; please request SMS code again')
+            state = body.state.strip() or pending.get('mailbox_state', '')
+            await app.state.wabi.mailbox_code_resend(state)
+            return {'ok': True}
 
     @app.get('/v1/models', dependencies=[Depends(inference)])
     async def models():

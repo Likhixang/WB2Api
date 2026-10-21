@@ -152,3 +152,18 @@ def test_api_key_management_and_inference_auth(client):
 
     del_res = client.delete(f'/admin/api/keys/{key_id}', headers=AH)
     assert del_res.status_code == 200
+
+
+def test_mailbox_verify_session_handling(client):
+    response = client.post('/admin/api/auth/mailbox-verify', headers=AH, json={
+        'phone_number': '+861****0000', 'code': '123456', 'state': 'test-state'
+    })
+    assert response.status_code == 400
+
+
+def test_check_account_failure_returns_200_json(client):
+    account = client.app.state.store.add_account(label='invalid-test', id_token='invalid-token', expires_at=time.time() + 3600)
+    response = client.post(f'/admin/api/accounts/{account["id"]}/check', headers=AH)
+    assert response.status_code == 200
+    assert response.json()['ok'] is False
+

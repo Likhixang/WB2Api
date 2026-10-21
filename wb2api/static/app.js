@@ -80,15 +80,18 @@
       headers,
       body: body !== undefined ? JSON.stringify(body) : undefined
     });
-    if (res.status === 401 && auth) {
-      lock('管理员密钥无效或已过期，请重新解锁');
-      throw new Error('未授权，请重新解锁');
-    }
     const text = await res.text();
     let data = null;
     if (text) {
       try { data = JSON.parse(text); }
       catch { throw new Error(`服务端异常 (HTTP ${res.status})`); }
+    }
+    if (res.status === 401 && auth) {
+      const isActualAdmin401 = data?.detail === 'Invalid admin key' || data?.error?.code === 'unauthorized' || path === '/admin/api/status';
+      if (isActualAdmin401) {
+        lock('管理员密钥无效或已过期，请重新解锁');
+        throw new Error('未授权，请重新解锁');
+      }
     }
     if (!res.ok) {
       const msg = data?.detail || data?.error?.message || data?.message || `请求失败 (HTTP ${res.status})`;
@@ -225,18 +228,32 @@
     btn.innerHTML = `<i data-lucide="loader" class="w-4 h-4 animate-spin"></i><span>验证中…</span>`;
     if (window.lucide) lucide.createIcons({ root: btn });
     hideMsg();
-    $('google-challenge-box').classList.add('hidden');
+    if ($('mailbox-challenge-box')) $('mailbox-challenge-box').classList.add('hidden');
+    if ($('google-challenge-box')) $('google-challenge-box').classList.add('hidden');
     try {
       const res = await api('/admin/api/auth/check-code', {
         method: 'POST',
         body: { phone_number: phone, code, label, account_id: state.reauthAccountId || '' }
       });
+      if (res.requires_mailbox) {
+        state.pendingMailbox = { phone, state: res.mailbox_state, label, accountId: state.reauthAccountId || '' };
+        $('mailbox-challenge-box').classList.remove('hidden');
+        if (res.mailbox_hint) {
+          $('mailbox-hint-text').textContent = `验证码已发送至绑定邮箱（${res.mailbox_hint}），请输入 6 位数字验证码：`;
+        }
+        startMailboxTimer(res.retry_after_seconds || 60);
+        if (window.lucide) lucide.createIcons();
+        showMsg('手机短信校验成功！已向你的绑定邮箱发送二次验证码，请在下方填入。');
+        toast('请查收并填入邮箱验证码');
+        $('mailbox-code-input').focus();
+        return;
+      }
       if (res.requires_google) {
         state.pendingGoogle = { phone, state: res.google_state, label, accountId: state.reauthAccountId || '' };
         $('btn-google-auth-link').href = res.google_url;
         $('google-challenge-box').classList.remove('hidden');
         if (window.lucide) lucide.createIcons();
-        showMsg('该账号触发了 Wabi Google 二次验证，请按下方 3 步完成授权。');
+        showMsg('该账号触发了 Wabi Google 二次验证，请按提示完成授权。');
         toast('请完成 Google 二次验证');
         return;
       }
@@ -248,8 +265,85 @@
       showMsg(err.message, true);
     } finally {
       btn.disabled = false;
-      btn.innerHTML = `<i data-lucide="check" class="w-4 h-4"></i><span>验证并导入</span>`;
+      btn.innerHTML = `<i data-lucide="check" class="w-4 h-4"></i><span>验证并存入号池</span>`;
       if (window.lucide) lucide.createIcons();
+    }
+  };
+
+  let mailboxTimer = null;
+  function startMailboxTimer(seconds) {
+    let remain = seconds;
+    const btn = $('btn-resend-mailbox');
+    const timerSpan = $('mailbox-timer');
+    if (!btn) return;
+    if (mailboxTimer) clearInterval(mailboxTimer);
+    btn.disabled = true;
+    if (timerSpan) timerSpan.textContent = `(${remain}s)`;
+    mailboxTimer = setInterval(() => {
+      remain--;
+      if (remain <= 0) {
+        clearInterval(mailboxTimer);
+        mailboxTimer = null;
+        btn.disabled = false;
+        if (timerSpan) timerSpan.textContent = '';
+      } else {
+        if (timerSpan) timerSpan.textContent = `(${remain}s)`;
+      }
+    }, 1000);
+  }
+
+  window.handleVerifyMailbox = async function() {
+    const code = $('mailbox-code-input').value.trim();
+    if (!code) { showMsg('请输入 6 位邮箱验证码', true); return; }
+    const info = state.pendingMailbox || {};
+    const btn = $('btn-submit-mailbox');
+    btn.disabled = true;
+    btn.textContent = '验证激活中…';
+    hideMsg();
+    try {
+      await api('/admin/api/auth/mailbox-verify', {
+        method: 'POST',
+        body: {
+          phone_number: info.phone || $('sms-phone').value.trim(),
+          state: info.state || '',
+          code,
+          label: info.label || '手机账号',
+          account_id: info.accountId || state.reauthAccountId || ''
+        }
+      });
+      toast(state.reauthAccountId ? '邮箱验证成功，账号凭据已原地更新！' : '邮箱验证成功，账号已成功入库激活！');
+      $('mailbox-challenge-box').classList.add('hidden');
+      $('sms-code').value = '';
+      $('mailbox-code-input').value = '';
+      state.pendingMailbox = null;
+      state.reauthAccountId = null;
+      await syncStatus();
+    } catch (err) {
+      showMsg(err.message, true);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = '完成验证并激活';
+    }
+  };
+
+  window.handleResendMailbox = async function() {
+    const info = state.pendingMailbox || {};
+    const btn = $('btn-resend-mailbox');
+    btn.disabled = true;
+    hideMsg();
+    try {
+      await api('/admin/api/auth/mailbox-resend', {
+        method: 'POST',
+        body: {
+          phone_number: info.phone || $('sms-phone').value.trim(),
+          state: info.state || ''
+        }
+      });
+      toast('邮箱验证码已重新发送，请查收');
+      startMailboxTimer(60);
+    } catch (err) {
+      showMsg(err.message, true);
+      btn.disabled = false;
     }
   };
 
@@ -283,16 +377,28 @@
       showMsg(err.message, true);
     } finally {
       btn.disabled = false;
-      btn.textContent = '第 3 步：完成验证并激活入库';
+      btn.textContent = '完成 Google 验证入库';
     }
   };
 
-  // --- Manual Token Import ---
+  // --- Manual Token Import & Collapse ---
+  window.toggleManualImport = function() {
+    const pane = $('pane-token');
+    const icon = $('manual-import-icon');
+    if (!pane) return;
+    if (pane.classList.contains('hidden')) {
+      pane.classList.remove('hidden');
+      if (icon) icon.style.transform = 'rotate(90deg)';
+    } else {
+      pane.classList.add('hidden');
+      if (icon) icon.style.transform = '';
+    }
+  };
+
   window.handleManualImport = async function() {
     const label = $('import-label').value.trim() || '手动导入';
     const rt = $('import-rt').value.trim();
-    const idToken = $('import-id-token').value.trim();
-    if (!rt && !idToken) { showMsg('请至少填入 Refresh Token 或 ID Token', true); return; }
+    if (!rt) { showMsg('请填入 Refresh Token', true); return; }
     const btn = $('btn-manual-import');
     btn.disabled = true;
     btn.textContent = '导入中…';
@@ -300,27 +406,35 @@
     try {
       await api('/admin/api/accounts', {
         method: 'POST',
-        body: { label, refresh_token: rt, id_token: idToken }
+        body: { label, refresh_token: rt, id_token: '' }
       });
       toast('账号凭证导入成功！');
       $('import-rt').value = '';
-      $('import-id-token').value = '';
+      $('import-label').value = '';
       await syncStatus();
     } catch (err) {
       showMsg(err.message, true);
     } finally {
       btn.disabled = false;
-      btn.textContent = '导入账号凭证';
+      btn.textContent = '导入该凭证';
+    }
+  };
+
+  window.copyCurrentApiKey = function() {
+    const key = (state.tokens && state.tokens[0] ? state.tokens[0].key : '');
+    if (key) {
+      copyText(key, '已复制可用 API Key');
+    } else {
+      openTokenModal();
     }
   };
 
   window.reauthAccount = function(id, label, phone) {
     state.reauthAccountId = id;
-    switchLoginTab('phone');
     if (phone) $('sms-phone').value = phone;
     $('sms-label').value = label;
     showMsg(`正在为账号【${label}】重新验证并更新凭据。验证通过后将原地更新该账号。`);
-    $('pane-phone').scrollIntoView({ block: 'start', behavior: 'smooth' });
+    $('sms-phone').scrollIntoView({ block: 'start', behavior: 'smooth' });
     $('sms-phone').focus();
     toast(`已进入账号【${label}】重新验证模式`);
   };
@@ -351,11 +465,11 @@
             <td class="py-3 px-4 font-mono text-[11px] text-slate-500">${acc.has_refresh_token ? 'Refresh ✓' : ''} ${acc.has_id_token ? 'ID ✓' : ''}</td>
             <td class="py-3 px-4 font-mono text-[11px] text-slate-400">${exp}</td>
             <td class="py-3 px-4">${readyBadge}</td>
-            <td class="py-3 px-4 text-right space-x-1.5">
-              <button onclick="reauthAccount('${acc.id}', '${acc.label}', '${acc.phone_number || ''}')" class="px-2.5 py-1 text-[11px] rounded-lg bg-sky-50 dark:bg-sky-950/50 hover:bg-sky-100 dark:hover:bg-sky-900/50 text-sky-600 dark:text-sky-400 border border-sky-200 dark:border-sky-800/40 transition">重新验证</button>
-              <button onclick="checkAccount('${acc.id}')" class="px-2.5 py-1 text-[11px] rounded-lg border border-slate-200 dark:border-slate-800 hover:bg-slate-100 dark:hover:bg-slate-800 transition" title="只读探测 Wabi 上游状态">探测</button>
-              <button onclick="toggleAccount('${acc.id}', ${!acc.enabled})" class="px-2.5 py-1 text-[11px] rounded-lg border border-slate-200 dark:border-slate-800 hover:bg-slate-100 dark:hover:bg-slate-800 transition">${acc.enabled ? '停用' : '启用'}</button>
-              <button onclick="deleteAccount('${acc.id}')" class="px-2.5 py-1 text-[11px] rounded-lg border border-rose-200 dark:border-rose-900/40 text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/40 transition">删除</button>
+            <td class="py-3 px-4 text-right space-x-1 sm:space-x-1.5 whitespace-nowrap">
+              <button onclick="reauthAccount('${acc.id}', '${acc.label}', '${acc.phone_number || ''}')" class="px-2 py-1 text-[11px] rounded-lg bg-sky-50 dark:bg-sky-950/50 hover:bg-sky-100 dark:hover:bg-sky-900/50 text-sky-600 dark:text-sky-400 border border-sky-200 dark:border-sky-800/40 transition" title="重新验证并更新凭据">重验</button>
+              <button onclick="checkAccount('${acc.id}')" class="px-2 py-1 text-[11px] rounded-lg border border-slate-200 dark:border-slate-800 hover:bg-slate-100 dark:hover:bg-slate-800 text-emerald-600 dark:text-emerald-400 transition" title="只读探测 Wabi 上游状态">探测</button>
+              <button onclick="toggleAccount('${acc.id}', ${!acc.enabled})" class="px-2 py-1 text-[11px] rounded-lg border border-slate-200 dark:border-slate-800 hover:bg-slate-100 dark:hover:bg-slate-800 transition">${acc.enabled ? '停用' : '启用'}</button>
+              <button onclick="deleteAccount('${acc.id}')" class="px-2 py-1 text-[11px] rounded-lg border border-rose-200 dark:border-rose-900/40 text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/40 transition">删除</button>
             </td>
           </tr>
         `;
@@ -373,7 +487,7 @@
       if (res.ok) {
         toast('Wabi 上游认证有效，账号健康！');
       } else {
-        toast('Wabi 上游返回异常', true);
+        toast(`Wabi 上游未通过: ${res.error || res.code || 'HTTP ' + res.status}`, true);
       }
     } catch (err) {
       toast(err.message, true);

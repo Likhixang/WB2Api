@@ -186,6 +186,22 @@ class Wabi:
             json={"state": state, "code": code, "code_verifier": verifier},
         )
 
+    async def mailbox_code(self, state: str, code: str, verifier: str) -> dict[str, Any]:
+        if not isinstance(verifier, str) or not verifier:
+            raise UpstreamError("A PKCE verifier is required", 400, "invalid_verifier")
+        return await self._json(
+            "POST", self.base_url + "/api/v1/auth/phone/mailbox-code",
+            headers=self._headers(),
+            json={"state": state, "code": code, "code_verifier": verifier},
+        )
+
+    async def mailbox_code_resend(self, state: str) -> dict[str, Any]:
+        return await self._json(
+            "POST", self.base_url + "/api/v1/auth/phone/mailbox-code/resend",
+            headers=self._headers(),
+            json={"state": state},
+        )
+
     @staticmethod
     def _tokens(data: dict[str, Any], *, refresh: bool = False) -> dict[str, Any]:
         token_key = "id_token" if refresh else "idToken"
