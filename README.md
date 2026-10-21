@@ -61,4 +61,10 @@ curl "$WB2API_URL/v1/chat/completions" \
 
 For images, send `model: "wabi-image"` and `prompt` to `/v1/images/generations`. Currently supports one image per request and URL output. You can also select `wabi-image` in a chat client to receive an image link.
 
+## Persistent request diagnostics
+
+Request summaries are JSONL in `/data/logs/requests.log` (inside the existing data volume), rotated as `requests.log.1` through `.3`. `WB2API_LOG_MAX_BYTES=20971520` sets the **combined** budget for the active file and backups (20 MiB by default); `WB2API_LOG_BACKUPS=3` divides it into four files of at most 5 MiB each. Set the budget to `0` to disable disk logging. With logging enabled, each file needs at least 1024 bytes; backups must be 0–32. Lowering limits prunes oversized/excess old files at startup. Oldest entries are discarded, not archived indefinitely.
+
+Each response includes a server-generated `X-Request-ID` for correlation. Records contain only UTC time, ID, allowlisted HTTP method/endpoint, status, elapsed/first-body-byte milliseconds, completion/disconnection and a fixed error category. Streaming timing includes heartbeat bytes; it is not model time-to-first-token. An HTTP 200 does not imply a completed stream: check `completed` and `error_type`. Headers, query strings, request/response bodies, credentials, raw path identifiers and exception messages are never recorded. Unknown routes become `<unmatched>`. Log directory/files use 0700/0600 permissions. Use one process/worker per data directory; multi-process rotation is not supported. Disk-write failures do not interrupt responses. This budget covers these request log files only, not database files or Docker/Uvicorn console logs; configure container log rotation separately if needed.
+
 Keep `.env` and exported credentials private. Back up the data volume, including its encryption key. Use only accounts you are authorized to access and follow Wabi's terms and usage limits.

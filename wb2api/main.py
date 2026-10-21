@@ -21,6 +21,8 @@ from starlette.exceptions import HTTPException
 from .tool_compat import ToolAdapter, ToolProtocolError
 from .reasoning import ReasoningEffort, effort_hint, GATEWAY_PROMPT, neutralize_brand, neutral_text
 
+from .observability import RequestLogMiddleware
+from .streaming import with_heartbeats
 from .store import Store
 from .media import Media
 from .wabi import UpstreamError, Wabi
@@ -230,6 +232,8 @@ def create_app(overrides: dict | None = None) -> FastAPI:
         'encryption_key': os.getenv('WB2API_ENCRYPTION_KEY'),
         'base_url': os.getenv('WABI_BASE_URL', 'https://app.getwabi.ai').rstrip('/'),
         'request_timeout': float(os.getenv('WABI_REQUEST_TIMEOUT', '120')),
+        'log_max_bytes': int(os.getenv('WB2API_LOG_MAX_BYTES', '20971520')),
+        'log_backups': int(os.getenv('WB2API_LOG_BACKUPS', '3')),
         'timezone': os.getenv('WABI_TIME_ZONE', 'Asia/Shanghai'),
         'app_version': '2.0.2', 'app_build': '1010',
     }
@@ -253,6 +257,9 @@ def create_app(overrides: dict | None = None) -> FastAPI:
 
     app = FastAPI(title='WB2Api', version=VERSION, lifespan=lifespan,
                   docs_url=None, redoc_url=None, openapi_url=None)
+
+    app.add_middleware(RequestLogMiddleware, data_dir=config['data_dir'],
+                       max_bytes=config['log_max_bytes'], backups=config['log_backups'])
 
     @app.middleware('http')
     async def security_headers(request: Request, call_next):
@@ -301,10 +308,12 @@ def create_app(overrides: dict | None = None) -> FastAPI:
 
     @app.exception_handler(UpstreamError)
     async def upstream_error(request, exc):
+        request.state.gateway_error_code = exc.code
         return error(str(exc), getattr(exc, 'status', 502), getattr(exc, 'code', 'upstream_error'))
 
     @app.exception_handler(ToolProtocolError)
     async def tool_error(request, exc):
+        request.state.gateway_error_code = exc.code
         return error(str(exc), exc.status, exc.code)
 
     @app.exception_handler(KeyError)
@@ -704,64 +713,56 @@ def create_app(overrides: dict | None = None) -> FastAPI:
             return {'id': completion_id, 'object': 'chat.completion.chunk', 'created': created,
                     'model': 'wabi', 'choices': [{'index': 0, 'delta': delta, 'finish_reason': finish}]}
 
-        if not body.stream or tool_mode:
-            try:
-                content = ''.join([text async for text in iterator])
-            finally:
-                await iterator.aclose()
+        async def collect_message():
+            content = ''.join([text async for text in iterator])
             if not content:
-                return error('Upstream completed without text', 502, 'empty_response')
+                raise UpstreamError('Upstream completed without text', 502, 'empty_response')
             message, finish = adapter.parse(content) if tool_mode else ({'role': 'assistant', 'content': content}, 'stop')
             if tool_mode and message.get('content'):
                 message['content'] = neutralize_brand(message['content'])
-            if not body.stream:
+            return message, finish
+
+        if not body.stream:
+            try:
+                message, finish = await collect_message()
                 return JSONResponse({'id': completion_id, 'object': 'chat.completion', 'created': created, 'model': 'wabi',
                         'choices': [{'index': 0, 'message': message, 'finish_reason': finish}]}, headers=reasoning_headers)
-
-            async def buffered_events():
-                def encode(data):
-                    return 'data: ' + json.dumps(data, ensure_ascii=False) + '\n\n'
-                yield encode(chunk({'role': 'assistant'}))
-                if finish == 'tool_calls':
-                    for index, call in enumerate(message['tool_calls']):
-                        yield encode(chunk({'tool_calls': [{'index': index, **call}]}))
-                else:
-                    yield encode(chunk({'content': message['content']}))
-                yield encode(chunk({}, finish))
-                yield 'data: [DONE]\n\n'
-            return StreamingResponse(buffered_events(), media_type='text/event-stream', headers={
-                'X-Accel-Buffering': 'no', 'Cache-Control': 'no-cache', 'X-WB2Api-Tool-Stream': 'buffered', **reasoning_headers})
-
-        # Prefetch so protocol/authentication/connection failures still return proper HTTP errors.
-        try:
-            first = await anext(iterator)
-        except StopAsyncIteration:
-            await iterator.aclose()
-            return error('Upstream completed without text', 502, 'empty_response')
-        except BaseException:
-            await iterator.aclose()
-            raise
+            finally:
+                await iterator.aclose()
 
         async def events():
             def encode(data):
                 return 'data: ' + json.dumps(data, ensure_ascii=False) + '\n\n'
             try:
                 yield encode(chunk({'role': 'assistant'}))
-                yield encode(chunk({'content': first}))
-                async for text in iterator:
-                    if await request.is_disconnected():
-                        break
-                    yield encode(chunk({'content': text}))
+                if tool_mode:
+                    message, finish = await collect_message()
+                    if finish == 'tool_calls':
+                        for index, call in enumerate(message['tool_calls']):
+                            yield encode(chunk({'tool_calls': [{'index': index, **call}]}))
+                    else:
+                        yield encode(chunk({'content': message['content']}))
+                    yield encode(chunk({}, finish))
+                    yield 'data: [DONE]\n\n'
                 else:
+                    seen = False
+                    async for text in iterator:
+                        seen = True
+                        yield encode(chunk({'content': text}))
+                    if not seen:
+                        raise UpstreamError('Upstream completed without text', 502, 'empty_response')
                     yield encode(chunk({}, 'stop'))
                     yield 'data: [DONE]\n\n'
-            except UpstreamError as exc:
+            except (UpstreamError, ToolProtocolError) as exc:
+                request.state.gateway_error_code = exc.code
                 yield encode({'error': {'message': str(exc), 'type': 'upstream_error', 'code': getattr(exc, 'code', 'upstream_error')}})
-                # No success finish_reason or [DONE] on a failed stream.
+                # A failed stream has no successful finish_reason or [DONE].
             finally:
                 await iterator.aclose()
-        return StreamingResponse(events(), media_type='text/event-stream',
-                                 headers={'X-Accel-Buffering': 'no', 'Cache-Control': 'no-cache', **reasoning_headers})
+        headers = {'X-Accel-Buffering': 'no', 'Cache-Control': 'no-cache', **reasoning_headers}
+        if tool_mode:
+            headers['X-WB2Api-Tool-Stream'] = 'buffered'
+        return StreamingResponse(with_heartbeats(events()), media_type='text/event-stream', headers=headers)
 
     return app
 

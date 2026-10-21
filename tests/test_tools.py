@@ -172,8 +172,14 @@ def test_bad_model_call_is_http_error_and_never_leaks_xml(tmp_path, stream):
         app.state.wabi.stream_chat = bad_upstream
         response = client.post('/v1/chat/completions', headers=HEADERS, json={
             'messages': [{'role': 'user', 'content': 'hi'}], 'tools': TOOLS, 'stream': stream})
-        assert response.status_code == 502
-        assert response.json()['error']['code'] == 'invalid_tool_response'
+        if stream:
+            assert response.status_code == 200
+            frames = [json.loads(line[6:]) for line in response.text.splitlines() if line.startswith('data: ')]
+            assert frames[-1]['error']['code'] == 'invalid_tool_response'
+            assert '[DONE]' not in response.text and '"finish_reason": "stop"' not in response.text
+        else:
+            assert response.status_code == 502
+            assert response.json()['error']['code'] == 'invalid_tool_response'
         assert 'secret' not in response.text and '<function_calls>' not in response.text
 
 
