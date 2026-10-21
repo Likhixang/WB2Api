@@ -73,7 +73,7 @@ class Store:
         result = dict(row)
         result['enabled'] = bool(result['enabled'])
         result['phone_number'] = result.get('phone_number', '') or ''
-        result['activation_status'] = result.get('activation_status', 'active') or 'active'
+        result['activation_status'] = result.get('activation_status') or 'unknown'
         for field in self.secret_fields:
             result[field] = self.cipher.decrypt(result[field].encode()).decode() if result[field] else ''
         return result
@@ -82,7 +82,7 @@ class Store:
     def public(account: dict) -> dict:
         refreshable = bool(account['refresh_token'] and account['firebase_api_key'])
         valid_id = bool(account['id_token'] and account['expires_at'] > time.time() + 60)
-        activation = account.get('activation_status', 'active') or 'active'
+        activation = account.get('activation_status') or 'unknown'
         is_ready = bool(account['enabled'] and (refreshable or valid_id) and activation == 'active')
         return {
             'id': account['id'], 'label': account['label'], 'enabled': bool(account['enabled']),
@@ -137,7 +137,8 @@ class Store:
         phone = phone_number or row.get('phone_number', '')
         self.db.execute('''
             UPDATE accounts 
-            SET id_token=?, refresh_token=?, expires_at=?, firebase_api_key=?, phone_number=?, enabled=1
+            SET id_token=?, refresh_token=?, expires_at=?, firebase_api_key=?, phone_number=?, enabled=1,
+                activation_status=CASE WHEN activation_status IN ('invalid', 'active') THEN 'unknown' ELSE activation_status END
             WHERE id=?
         ''', (self.seal(id_token), self.seal(refresh_token), expires_at, fb_key, phone, account_id))
         self.db.commit()

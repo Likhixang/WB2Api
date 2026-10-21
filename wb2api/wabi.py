@@ -283,7 +283,9 @@ class Wabi:
                 if user_id and not account.get("user_id"):
                     await _resolve(self.store.update_user_id(account_id, user_id))
                     account["user_id"] = user_id
-                status = data.get("activation_status", "active")
+                status = data.get("activation_status")
+                if not isinstance(status, str) or not status.strip():
+                    status = account.get("activation_status") or "unknown"
                 await _resolve(self.store.update_activation_status(account_id, status))
                 return {key: data[key] for key in ("id", "firebase_id", "username", "display_name", "activation_status") if key in data and isinstance(data[key], (str, type(None)))}
             except UpstreamError as exc:

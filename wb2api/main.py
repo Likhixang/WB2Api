@@ -354,12 +354,21 @@ def create_app(overrides: dict | None = None) -> FastAPI:
         payload['firebase_api_key'] = firebase_key
         return app.state.store.add_account(**payload, expires_at=jwt_exp(body.id_token))
 
+    async def reverify_credentials(account_id: str, **credentials):
+        app.state.store.update_account_credentials(account_id, **credentials)
+        try:
+            await app.state.wabi.validate_account(account_id)
+        except UpstreamError as exc:
+            result = app.state.store.public(app.state.store.get_account(account_id))
+            return {**result, 'verification_pending': True, 'verification_code': exc.code}
+        return app.state.store.public(app.state.store.get_account(account_id))
+
     @app.put('/admin/api/accounts/{account_id}/reauth', dependencies=[Depends(admin)])
     async def reauth_account(account_id: str, body: AccountInput):
         if not body.refresh_token and not body.id_token:
             raise HTTPException(422, 'Provide a refresh token or ID token')
         firebase_key = body.firebase_api_key or DEFAULT_FIREBASE_API_KEY
-        return app.state.store.update_account_credentials(
+        return await reverify_credentials(
             account_id,
             id_token=body.id_token,
             refresh_token=body.refresh_token,
@@ -468,7 +477,7 @@ def create_app(overrides: dict | None = None) -> FastAPI:
             firebase_key = body.firebase_api_key or DEFAULT_FIREBASE_API_KEY
             tokens = await app.state.wabi.exchange_custom(token, firebase_key)
             if body.account_id:
-                account = app.state.store.update_account_credentials(
+                account = await reverify_credentials(
                     body.account_id,
                     id_token=tokens['id_token'],
                     refresh_token=tokens['refresh_token'],
@@ -519,7 +528,7 @@ def create_app(overrides: dict | None = None) -> FastAPI:
             label = body.label or pending.get('label') or 'Google Phone Account'
             account_id = body.account_id or pending.get('account_id')
             if account_id:
-                account = app.state.store.update_account_credentials(
+                account = await reverify_credentials(
                     account_id,
                     id_token=tokens['id_token'],
                     refresh_token=tokens['refresh_token'],
@@ -562,7 +571,7 @@ def create_app(overrides: dict | None = None) -> FastAPI:
             label = body.label or pending.get('label') or 'Phone Account'
             account_id = body.account_id or pending.get('account_id')
             if account_id:
-                account = app.state.store.update_account_credentials(
+                account = await reverify_credentials(
                     account_id,
                     id_token=tokens['id_token'],
                     refresh_token=tokens['refresh_token'],
