@@ -62,6 +62,43 @@ def _local_schema(value):
             _local_schema(item)
 
 
+def _parse_call_xml(inner):
+    # Keep existing XML-escaped envelopes byte-compatible. A code string can
+    # contain HTML/PHP/XML syntax; only recover it when strict raw JSON proves
+    # the exact data boundary, never via regex extraction or JSON repair.
+    if '<!' not in inner and '<?' not in inner:
+        try:
+            return ET.fromstring(inner)
+        except ET.ParseError:
+            pass
+    decoder = json.JSONDecoder()
+    pieces = []
+    pos = 0
+    while True:
+        start = inner.find('<args_json>', pos)
+        if start < 0:
+            pieces.append(inner[pos:])
+            break
+        data_start = start + len('<args_json>')
+        value_start = data_start
+        while value_start < len(inner) and inner[value_start].isspace():
+            value_start += 1
+        _, value_end = decoder.raw_decode(inner, value_start)
+        close = value_end
+        while close < len(inner) and inner[close].isspace():
+            close += 1
+        if not inner.startswith('</args_json>', close):
+            raise ValueError('Invalid argument boundary')
+        raw = inner[value_start:value_end]
+        strict_json(raw)
+        pieces.extend((inner[pos:data_start], escape(raw, quote=False), '</args_json>'))
+        pos = close + len('</args_json>')
+    safe = ''.join(pieces)
+    if '<!' in safe or '<?' in safe:
+        raise ValueError('XML declarations and entities are not supported')
+    return ET.fromstring(safe)
+
+
 class ToolAdapter:
     def __init__(self, tools=None, choice=None, parallel=True):
         self.tools = tools or []
@@ -212,9 +249,7 @@ class ToolAdapter:
             if self.choice == 'none' or not text.endswith(self.end):
                 raise ValueError('Unexpected or incomplete function call')
             inner = text[len(self.start):-len(self.end)]
-            if '<!' in inner or '<?' in inner:
-                raise ValueError('XML declarations and entities are not supported')
-            root = ET.fromstring(inner)
+            root = _parse_call_xml(inner)
             if root.tag != 'function_calls' or root.attrib or (root.text or '').strip():
                 raise ValueError('Invalid function_calls')
             calls = []
