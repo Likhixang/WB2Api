@@ -22,6 +22,7 @@ from starlette.exceptions import HTTPException
 from .tool_compat import ToolAdapter, ToolProtocolError
 from .reasoning import ReasoningEffort, effort_hint, GATEWAY_PROMPT, neutralize_brand, neutral_text
 
+from .cors import InferenceCORSMiddleware
 from .observability import RequestLogMiddleware
 from .streaming import with_heartbeats
 from .store import Store
@@ -292,9 +293,6 @@ def create_app(overrides: dict | None = None) -> FastAPI:
     app = FastAPI(title='WB2Api', version=VERSION, lifespan=lifespan,
                   docs_url=None, redoc_url=None, openapi_url=None)
 
-    app.add_middleware(RequestLogMiddleware, data_dir=config['data_dir'],
-                       max_bytes=config['log_max_bytes'], backups=config['log_backups'])
-
     @app.middleware('http')
     async def security_headers(request: Request, call_next):
         # Reject oversized/chunked JSON bodies before parsing; Starlette otherwise buffers them.
@@ -308,6 +306,10 @@ def create_app(overrides: dict | None = None) -> FastAPI:
         response.headers['Cache-Control'] = 'no-store'
         response.headers['Content-Security-Policy'] = "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
         return response
+
+    app.add_middleware(InferenceCORSMiddleware)
+    app.add_middleware(RequestLogMiddleware, data_dir=config['data_dir'],
+                       max_bytes=config['log_max_bytes'], backups=config['log_backups'])
 
     def authorize(request: Request, key: str):
         expected = config[key]
