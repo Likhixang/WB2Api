@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import hashlib
 import hmac
 import json
 import os
@@ -19,6 +20,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from starlette.exceptions import HTTPException
 
+from .auth import google_callback
 from .tool_compat import ToolAdapter, ToolProtocolError
 from .reasoning import ReasoningEffort, effort_hint, GATEWAY_PROMPT, neutralize_brand, neutral_text
 
@@ -584,30 +586,45 @@ def create_app(overrides: dict | None = None) -> FastAPI:
 
     @app.post('/admin/api/auth/google-verify', dependencies=[Depends(admin)])
     async def google_verify(body: GoogleVerify):
+        try:
+            code, callback_state = google_callback(body.code)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from None
+        submitted_state = body.state.strip()
+        if submitted_state and callback_state and submitted_state != callback_state:
+            raise HTTPException(400, '回调链接与当前授权会话不匹配，请使用本次 Google 授权返回的网址。')
+        state = callback_state or submitted_state
         async with app.state.login_lock:
             pending = None
+            session_phone = body.phone_number
             if body.phone_number:
                 pending = app.state.logins.get(body.phone_number)
-            if not pending and body.state:
-                for v in app.state.logins.values():
-                    if v.get('google_state') == body.state:
+            if not pending and state:
+                for phone, v in app.state.logins.items():
+                    if v.get('google_state') == state:
                         pending = v
+                        session_phone = phone
                         break
             if not pending or pending['expires'] < time.time():
-                raise HTTPException(400, 'Verification session expired; please request SMS code again')
-            raw_code = body.code.strip()
-            state = body.state.strip() or pending.get('google_state', '')
-            code = raw_code
-            if 'code=' in raw_code or 'state=' in raw_code:
-                from urllib.parse import urlparse, parse_qs
-                parsed = urlparse(raw_code if '://' in raw_code else 'http://localhost/' + raw_code.lstrip('/?'))
-                qs = parse_qs(parsed.query or parsed.fragment)
-                if 'code' in qs:
-                    code = qs['code'][0]
-                if 'state' in qs and not state:
-                    state = qs['state'][0]
-            result = await app.state.wabi.google_verify(state, code, pending['verifier'])
-            token = result.get('firebase_custom_token')
+                raise HTTPException(400, '本地验证会话已过期或服务已重启，请重新发送短信并完成本次 Google 授权。')
+            expected_state = pending.get('google_state', '')
+            if not expected_state:
+                raise HTTPException(400, '请先完成短信校验，取得本次 Google 授权链接。')
+            if state and not hmac.compare_digest(state.encode(), expected_state.encode()):
+                raise HTTPException(400, '回调链接与当前短信验证会话不匹配，请重新打开本次 Google 授权链接。')
+            state = expected_state
+            code_digest = hashlib.sha256(code.encode()).hexdigest()
+            token = (pending.get('google_custom_token')
+                     if pending.get('google_code_digest') == code_digest else None)
+            if not token:
+                result = await app.state.wabi.google_verify(state, code, pending['verifier'])
+                token = result.get('firebase_custom_token')
+                if isinstance(token, str) and token:
+                    # Keep only in this expiring in-memory login session. A manual
+                    # retry after Firebase transport failure must not redeem the
+                    # already accepted one-time Google authorization code again.
+                    pending['google_custom_token'] = token
+                    pending['google_code_digest'] = code_digest
             if not token:
                 raise UpstreamError('Google verification did not return a session token')
             firebase_key = body.firebase_api_key or pending.get('firebase_api_key') or DEFAULT_FIREBASE_API_KEY
@@ -621,17 +638,16 @@ def create_app(overrides: dict | None = None) -> FastAPI:
                     refresh_token=tokens['refresh_token'],
                     expires_at=tokens['expires_at'],
                     firebase_api_key=firebase_key,
-                    phone_number=body.phone_number
+                    phone_number=session_phone
                 )
             else:
                 account = app.state.store.add_account(
                     label=label,
                     firebase_api_key=firebase_key,
-                    phone_number=body.phone_number,
+                    phone_number=session_phone,
                     **tokens
                 )
-            if body.phone_number:
-                app.state.logins.pop(body.phone_number, None)
+            app.state.logins.pop(session_phone, None)
             return {'ok': True, 'account': account}
 
     @app.post('/admin/api/auth/mailbox-verify', dependencies=[Depends(admin)])

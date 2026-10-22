@@ -135,12 +135,19 @@ class Wabi:
             return UpstreamError("Upstream rate limit reached", 429, "upstream_rate_limited")
         return UpstreamError(f"Upstream returned HTTP {status}; request was not retried", status if 400 <= status <= 599 else 502, "upstream_http_error")
 
-    async def _json(self, method: str, url: str, **kwargs: Any) -> dict[str, Any]:
+    async def _json(self, method: str, url: str, *, auth_flow: str = '', **kwargs: Any) -> dict[str, Any]:
         self._ensure_open()
         try:
             async with asyncio.timeout(self.timeout):
                 async with self.client.stream(method, url, **kwargs) as response:
                     if not 200 <= response.status_code < 300:
+                        if auth_flow == 'google' and response.status_code == 400:
+                            body = bytearray()
+                            async for chunk in response.aiter_bytes():
+                                body.extend(chunk)
+                                if len(body) > self.max_json_bytes:
+                                    break
+                            raise self._google_error(bytes(body[:self.max_json_bytes]))
                         raise self._http_error(response.status_code)
                     body = bytearray()
                     async for chunk in response.aiter_bytes(chunk_size=16384):
@@ -162,6 +169,30 @@ class Wabi:
         except httpx.HTTPError as exc:
             # Never expose exception strings: Firebase URLs contain API keys.
             raise UpstreamError("Upstream transport failed; request was not retried", code="upstream_transport_error") from exc
+
+    @staticmethod
+    def _google_error(body: bytes) -> UpstreamError:
+        # Classify known failure families; never return arbitrary upstream text,
+        # URLs, authorization codes or state values to the browser or logs.
+        text = body.decode('utf-8', errors='replace').lower()
+        try:
+            payload = json.loads(body)
+        except (ValueError, UnicodeError, RecursionError):
+            payload = {}
+        if isinstance(payload, dict) and payload.get('error_code') == 'invalid_request':
+            return UpstreamError('Wabi 认为 Google 验证请求无效（invalid_request）。请使用本次短信验证返回的授权链接；若新流程仍失败，需要核对上游认证字段。',
+                                 400, 'google_request_invalid')
+        if any(marker in text for marker in ('code_verifier', 'code_challenge', 'pkce')):
+            return UpstreamError('Wabi 拒绝了 PKCE 验证，请重新发送短信并使用本次 Google 授权链接。',
+                                 400, 'google_pkce_failed')
+        if any(marker in text for marker in ('invalid_grant', 'expired', 'already used', 'already redeemed')):
+            return UpstreamError('Google 授权码或会话已失效，请重新完成短信和 Google 授权，不要重复提交旧链接。',
+                                 400, 'google_authorization_expired')
+        if 'state' in text:
+            return UpstreamError('Wabi 拒绝了授权会话，请重新完成短信验证并打开本次 Google 授权链接。',
+                                 400, 'google_state_invalid')
+        return UpstreamError('Wabi 拒绝了 Google 验证请求（HTTP 400）。请重新完成短信和 Google 授权；若再次失败，需要核对上游认证协议。',
+                             400, 'google_verification_rejected')
 
     async def send_code(self, phone: str) -> dict[str, Any]:
         return await self._json(
@@ -190,7 +221,7 @@ class Wabi:
             raise UpstreamError("A PKCE verifier is required", 400, "invalid_verifier")
         return await self._json(
             "POST", self.base_url + "/api/v1/auth/phone/google-verify",
-            headers=self._headers(),
+            headers=self._headers(), auth_flow='google',
             json={"state": state, "code": code, "code_verifier": verifier},
         )
 
